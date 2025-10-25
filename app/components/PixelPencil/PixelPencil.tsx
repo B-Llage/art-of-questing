@@ -1,0 +1,813 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
+import { PaintTool, PaletteTheme } from "./PixelPencilTypes";
+import { BucketTool, PencilTool } from "./PixelPencilTools";
+import Image from 'next/image'
+import { PixelPencilPalettes } from "./PixelPencilPalettes";
+
+const GRID_SIZE = 32;
+const CANVAS_PIXEL_SIZE = 16; // render size for each cell in pixels
+const TRANSPARENT_LIGHT = "#d4d4d8";
+const TRANSPARENT_DARK = "#9ca3af";
+
+const MAX_HISTORY = 5;
+const BRUSH_SIZES = [1, 2, 3] as const;
+
+const TOOLS: readonly PaintTool[] = [
+  PencilTool,
+  BucketTool,
+] as const;
+
+const PALETTE_THEMES: readonly PaletteTheme[] = PixelPencilPalettes;
+
+const BRUSH_SHAPES = [
+  { id: "square", label: "Square" },
+  { id: "circle", label: "Circle" },
+] as const;
+
+type PaletteColor = (typeof PALETTE_THEMES)[number]["colors"][number] | "transparent";
+type PixelValue = PaletteColor | null;
+type Tool = (typeof TOOLS)[number]["id"];
+type BrushShape = (typeof BRUSH_SHAPES)[number]["id"];
+
+const makeEmptyGrid = (): PixelValue[] =>
+  new Array(GRID_SIZE * GRID_SIZE).fill(null) as PixelValue[];
+
+const arePixelsEqual = (a: PixelValue[], b: PixelValue[]) => {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+export function PixelPencil() {
+  const [pixels, setPixels] = useState<PixelValue[]>(() => makeEmptyGrid());
+  const [paletteThemeId, setPaletteThemeId] = useState<
+    (typeof PALETTE_THEMES)[number]["id"]
+  >(PALETTE_THEMES[0].id);
+  const [activeColor, setActiveColor] = useState<PaletteColor>(
+    PALETTE_THEMES[0].colors[0],
+  );
+  const [tool, setTool] = useState<Tool>("pencil");
+  const [brushSize, setBrushSize] = useState<(typeof BRUSH_SIZES)[number]>(1);
+  const [brushShape, setBrushShape] = useState<BrushShape>("square");
+  const [isPreviewEnabled, setIsPreviewEnabled] = useState(true);
+  const [isPaletteMenuOpen, setIsPaletteMenuOpen] = useState(false);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const isDrawingRef = useRef(false);
+  const drawValueRef = useRef<PixelValue>(PALETTE_THEMES[0].colors[0]);
+  const pixelsRef = useRef(pixels);
+  const undoStackRef = useRef<PixelValue[][]>([]);
+  const redoStackRef = useRef<PixelValue[][]>([]);
+  const actionInProgressRef = useRef(false);
+  const actionModifiedRef = useRef(false);
+  const paletteMenuRef = useRef<HTMLDivElement | null>(null);
+  const currentPalette = useMemo(() => {
+    const found = PALETTE_THEMES.find((theme) => theme.id === paletteThemeId);
+    return found ?? PALETTE_THEMES[0];
+  }, [paletteThemeId]);
+
+  const paletteColors = useMemo(
+    () => [...currentPalette.colors, "transparent"] as PaletteColor[],
+    [currentPalette],
+  );
+
+  useEffect(() => {
+    pixelsRef.current = pixels;
+  }, [pixels]);
+
+  const updateHistoryState = useCallback(() => {
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(redoStackRef.current.length > 0);
+  }, []);
+
+  useEffect(() => {
+    updateHistoryState();
+  }, [updateHistoryState]);
+
+  useEffect(() => {
+    if (!isPaletteMenuOpen) return;
+    const handleClickAway = (event: MouseEvent) => {
+      if (
+        paletteMenuRef.current &&
+        !paletteMenuRef.current.contains(event.target as Node)
+      ) {
+        setIsPaletteMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickAway);
+    return () => document.removeEventListener("mousedown", handleClickAway);
+  }, [isPaletteMenuOpen]);
+
+  const recordSnapshot = useCallback(() => {
+    const snapshot = [...pixelsRef.current];
+    const undoStack = undoStackRef.current;
+    const lastSnapshot = undoStack[undoStack.length - 1];
+    if (lastSnapshot && arePixelsEqual(lastSnapshot, snapshot)) {
+      return;
+    }
+    if (undoStack.length === MAX_HISTORY) {
+      undoStack.shift();
+    }
+    undoStack.push(snapshot);
+    updateHistoryState();
+  }, [updateHistoryState]);
+
+  const beginAction = useCallback(() => {
+    if (actionInProgressRef.current) return;
+    recordSnapshot();
+    redoStackRef.current = [];
+    updateHistoryState();
+    actionInProgressRef.current = true;
+    actionModifiedRef.current = false;
+  }, [recordSnapshot, updateHistoryState]);
+
+  const finalizeAction = useCallback(() => {
+    if (!actionInProgressRef.current) return;
+    const undoStack = undoStackRef.current;
+    const lastSnapshot = undoStack[undoStack.length - 1];
+    if (lastSnapshot && arePixelsEqual(lastSnapshot, pixelsRef.current)) {
+      undoStack.pop();
+    }
+    actionModifiedRef.current = false;
+    actionInProgressRef.current = false;
+    updateHistoryState();
+  }, [updateHistoryState]);
+
+  const undo = useCallback(() => {
+    if (actionInProgressRef.current) return;
+    const undoStack = undoStackRef.current;
+    if (!undoStack.length) return;
+    const previous = undoStack.pop();
+    if (!previous) return;
+    const currentSnapshot = [...pixelsRef.current];
+    if (redoStackRef.current.length === MAX_HISTORY) {
+      redoStackRef.current.shift();
+    }
+    redoStackRef.current.push(currentSnapshot);
+    const restored = previous.slice();
+    pixelsRef.current = restored;
+    setPixels(restored);
+    setHoverIndex(null);
+    actionModifiedRef.current = false;
+    actionInProgressRef.current = false;
+    updateHistoryState();
+  }, [setPixels, updateHistoryState]);
+
+  const redo = useCallback(() => {
+    if (actionInProgressRef.current) return;
+    const redoStack = redoStackRef.current;
+    if (!redoStack.length) return;
+    const next = redoStack.pop();
+    if (!next) return;
+    const currentSnapshot = [...pixelsRef.current];
+    const undoStack = undoStackRef.current;
+    if (undoStack.length === MAX_HISTORY) {
+      undoStack.shift();
+    }
+    undoStack.push(currentSnapshot);
+    const restored = next.slice();
+    pixelsRef.current = restored;
+    setPixels(restored);
+    setHoverIndex(null);
+    actionModifiedRef.current = false;
+    actionInProgressRef.current = false;
+    updateHistoryState();
+  }, [setPixels, updateHistoryState]);
+
+  useEffect(() => {
+    console.log(undoStackRef.current)
+  }, [pixels])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key !== "z") return;
+      const isModifier = event.metaKey || event.ctrlKey;
+      if (!isModifier) return;
+
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (event.shiftKey) {
+        redo();
+      } else {
+        undo();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [redo, undo]);
+
+  const computeBrushIndices = useCallback(
+    (centerIndex: number) => {
+      const centerX = centerIndex % GRID_SIZE;
+      const centerY = Math.floor(centerIndex / GRID_SIZE);
+      const startOffset = -Math.floor((brushSize - 1) / 2);
+      const endOffset = Math.ceil((brushSize - 1) / 2);
+      const indices: number[] = [];
+
+      for (let dy = startOffset; dy <= endOffset; dy += 1) {
+        for (let dx = startOffset; dx <= endOffset; dx += 1) {
+          if (
+            brushShape === "circle" &&
+            Math.abs(dx) + Math.abs(dy) > 1
+          ) {
+            continue;
+          }
+
+          const x = centerX + dx;
+          const y = centerY + dy;
+
+          if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) {
+            continue;
+          }
+
+          indices.push(y * GRID_SIZE + x);
+        }
+      }
+
+      return indices;
+    },
+    [brushShape, brushSize],
+  );
+
+  const applyBrush = useCallback(
+    (index: number, value: PixelValue) => {
+      const indices = computeBrushIndices(index);
+      if (indices.length === 0) return;
+
+      let changed = false;
+      setPixels((prev) => {
+        const next = [...prev];
+
+        for (const target of indices) {
+          if (next[target] === value) continue;
+          next[target] = value;
+          changed = true;
+        }
+
+        if (!changed) {
+          return prev;
+        }
+
+        pixelsRef.current = next;
+        return next;
+      });
+
+      if (changed) {
+        actionModifiedRef.current = true;
+      }
+    },
+    [computeBrushIndices],
+  );
+
+  const startStroke = useCallback(
+    (index: number, nextValue: PixelValue) => {
+      isDrawingRef.current = true;
+      drawValueRef.current = nextValue;
+      applyBrush(index, drawValueRef.current);
+    },
+    [applyBrush],
+  );
+
+  const continueStroke = useCallback(
+    (index: number) => {
+      if (!isDrawingRef.current) return;
+      applyBrush(index, drawValueRef.current);
+    },
+    [applyBrush],
+  );
+
+  const stopStroke = useCallback(() => {
+    isDrawingRef.current = false;
+    finalizeAction();
+  }, [finalizeAction]);
+
+  const floodFill = useCallback((startIndex: number, fillValue: PixelValue) => {
+    let changed = false;
+    setPixels((prev) => {
+      const targetValue = prev[startIndex];
+      if (targetValue === fillValue) {
+        return prev;
+      }
+
+      const next = [...prev];
+      const stack = [startIndex];
+      const visited = new Set<number>();
+
+      while (stack.length) {
+        const index = stack.pop();
+        if (index === undefined || visited.has(index)) continue;
+        visited.add(index);
+
+        if (prev[index] !== targetValue) continue;
+
+        next[index] = fillValue;
+        changed = true;
+
+        const x = index % GRID_SIZE;
+        const y = Math.floor(index / GRID_SIZE);
+
+        if (x > 0) stack.push(index - 1);
+        if (x < GRID_SIZE - 1) stack.push(index + 1);
+        if (y > 0) stack.push(index - GRID_SIZE);
+        if (y < GRID_SIZE - 1) stack.push(index + GRID_SIZE);
+      }
+
+      if (!changed) {
+        return prev;
+      }
+
+      pixelsRef.current = next;
+      return next;
+    });
+
+    if (changed) {
+      actionModifiedRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    const handlePointerUp = () => stopStroke();
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => window.removeEventListener("pointerup", handlePointerUp);
+  }, [stopStroke]);
+
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>, index: number) => {
+      event.preventDefault();
+      const isRightClick = event.button === 2;
+      const isErase = isRightClick || event.altKey || event.metaKey || event.ctrlKey;
+      beginAction();
+      setHoverIndex(index);
+      if (tool === "bucket") {
+        floodFill(index, isErase ? null : activeColor);
+        return;
+      }
+      startStroke(index, isErase ? null : activeColor);
+    },
+    [activeColor, beginAction, floodFill, startStroke, tool],
+  );
+
+  const handlePointerEnter = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>, index: number) => {
+      setHoverIndex(index);
+      if (!isDrawingRef.current) return;
+      event.preventDefault();
+      continueStroke(index);
+    },
+    [continueStroke],
+  );
+
+  const handlePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      stopStroke();
+      setHoverIndex(null);
+    },
+    [stopStroke],
+  );
+
+  const handlePointerLeave = useCallback(() => {
+    if (!isDrawingRef.current) {
+      setHoverIndex(null);
+    }
+  }, []);
+
+  // Render matrix once so React keys stay stable.
+  const bucketPreview = useMemo(() => {
+    if (!isPreviewEnabled || hoverIndex === null || tool !== "bucket") return null;
+    const targetColor = pixels[hoverIndex];
+    if (targetColor === undefined) return null;
+
+    const visited = new Set<number>();
+    const stack = [hoverIndex];
+    const region = new Set<number>();
+
+    while (stack.length) {
+      const index = stack.pop();
+      if (index === undefined || visited.has(index)) continue;
+      visited.add(index);
+
+      if (pixels[index] !== targetColor) continue;
+
+      region.add(index);
+
+      const x = index % GRID_SIZE;
+      const y = Math.floor(index / GRID_SIZE);
+
+      if (x > 0) stack.push(index - 1);
+      if (x < GRID_SIZE - 1) stack.push(index + 1);
+      if (y > 0) stack.push(index - GRID_SIZE);
+      if (y < GRID_SIZE - 1) stack.push(index + GRID_SIZE);
+    }
+
+    return region;
+  }, [hoverIndex, isPreviewEnabled, pixels, tool]);
+
+  const brushPreview = useMemo(() => {
+    if (!isPreviewEnabled || hoverIndex === null || tool !== "pencil") return null;
+    return new Set(computeBrushIndices(hoverIndex));
+  }, [computeBrushIndices, hoverIndex, isPreviewEnabled, tool]);
+
+  const cells = useMemo(
+    () =>
+      pixels.map((pixel, index) => {
+        const x = index % GRID_SIZE;
+        const y = Math.floor(index / GRID_SIZE);
+        const key = `${x}-${y}`;
+        const isTransparent = pixel === null || pixel === "transparent";
+        const patternColor =
+          (x + y) % 2 === 0 ? TRANSPARENT_LIGHT : TRANSPARENT_DARK;
+        const fillColor = isTransparent ? patternColor : (pixel as PaletteColor);
+        return (
+          <button
+            key={key}
+            type="button"
+            className="relative border border-zinc-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+            style={{
+              width: `${CANVAS_PIXEL_SIZE}px`,
+              height: `${CANVAS_PIXEL_SIZE}px`,
+              backgroundColor: fillColor,
+              opacity:
+                tool === "bucket"
+                  ? bucketPreview?.has(index)
+                    ? 0.7
+                    : 1
+                  : brushPreview?.has(index)
+                    ? 0.7
+                    : 1,
+            }}
+            onContextMenu={(event) => event.preventDefault()}
+            onPointerDown={(event) => handlePointerDown(event, index)}
+            onPointerEnter={(event) => handlePointerEnter(event, index)}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerLeave}
+          />
+        );
+      }),
+    [
+      handlePointerDown,
+      handlePointerEnter,
+      handlePointerLeave,
+      handlePointerUp,
+      pixels,
+      bucketPreview,
+      brushPreview,
+      tool,
+    ],
+  );
+
+  const reset = useCallback(() => {
+    const current = pixelsRef.current;
+    const isAlreadyEmpty = current.every((value) => value === null);
+    if (isAlreadyEmpty) return;
+    recordSnapshot();
+    redoStackRef.current = [];
+    const cleared = makeEmptyGrid();
+    pixelsRef.current = cleared;
+    setPixels(cleared);
+    setHoverIndex(null);
+    actionModifiedRef.current = false;
+    actionInProgressRef.current = false;
+    updateHistoryState();
+  }, [recordSnapshot, setPixels, updateHistoryState]);
+
+  const downloadPng = useCallback(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = GRID_SIZE;
+    canvas.height = GRID_SIZE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+
+    ctx.imageSmoothingEnabled = false;
+
+    for (let index = 0; index < pixels.length; index += 1) {
+      const color = pixels[index];
+      const x = index % GRID_SIZE;
+      const y = Math.floor(index / GRID_SIZE);
+      if (color === null || color === "transparent") {
+        ctx.clearRect(x, y, 1, 1);
+      } else {
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "pixel-art.png";
+      link.click();
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  }, [pixels]);
+
+  const toolButtons = useMemo(
+    () =>
+      TOOLS.map((option) => {
+        const isSelected = option.id === tool;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${isSelected
+              ? "bg-black text-white dark:bg-white dark:text-black"
+              : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              }`}
+            onClick={() => setTool(option.id)}
+          >
+            <Image
+              src={option.icon}
+              width={32}
+              height={32}
+              alt="Tool Tip"
+              unoptimized={true}
+              style={{imageRendering:"pixelated"}}
+            />
+
+          </button>
+
+        );
+      }),
+    [tool],
+  );
+
+  const brushSizeButtons = useMemo(
+    () =>
+      BRUSH_SIZES.map((size) => {
+        const isSelected = size === brushSize;
+        return (
+          <button
+            key={size}
+            type="button"
+            className={`rounded-full border border-zinc-300 px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${isSelected
+              ? "bg-black text-white dark:bg-white dark:text-black"
+              : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              }`}
+            onClick={() => setBrushSize(size)}
+          >
+            {size}px
+          </button>
+        );
+      }),
+    [brushSize],
+  );
+
+  const brushShapeButtons = useMemo(
+    () =>
+      BRUSH_SHAPES.map((shape) => {
+        const isSelected = shape.id === brushShape;
+        return (
+          <button
+            key={shape.id}
+            type="button"
+            className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${isSelected
+              ? "bg-black text-white dark:bg-white dark:text-black"
+              : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              }`}
+            onClick={() => setBrushShape(shape.id)}
+          >
+            {shape.label}
+          </button>
+        );
+      }),
+    [brushShape],
+  );
+
+  const paletteButtons = useMemo(
+    () =>
+      paletteColors.map((color) => {
+        const isSelected = color === activeColor;
+        const isTransparent = color === "transparent";
+        return (
+          <button
+            key={color}
+            type="button"
+            aria-label={`Use color ${color}`}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-300 transition-all hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+            style={{
+              backgroundColor: isTransparent ? "transparent" : color,
+              backgroundImage: isTransparent
+                ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
+                : undefined,
+              backgroundSize: isTransparent ? "8px 8px" : undefined,
+              backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
+              boxShadow: isSelected
+                ? "0 0 0 3px rgba(59,130,246,0.45)"
+                : undefined,
+            }}
+            onClick={() => {
+              setActiveColor(color);
+              drawValueRef.current = color;
+            }}
+          >
+            {isSelected && (
+              <span
+                className="block h-2 w-2 rounded-full border border-white dark:border-black"
+                aria-hidden
+              />
+            )}
+          </button>
+        );
+      }),
+    [activeColor, paletteColors],
+  );
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-4 text-sm text-zinc-600 dark:text-zinc-300">
+          <span className="font-medium text-zinc-900 dark:text-zinc-50">
+            Toolbox
+          </span>
+          <span>Left click to draw or fill</span>
+          <span>Alt/Ctrl/⌘ or right click to erase</span>
+          <span>Bucket fills enclosed regions</span>
+        </div>
+        <div className="flex flex-wrap gap-3">{toolButtons}</div>
+      </div>
+      {tool === "pencil" && (
+        <>
+          <div className="flex flex-col gap-3">
+            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+              Brush Size
+            </span>
+            <div className="flex flex-wrap gap-3">{brushSizeButtons}</div>
+          </div>
+          <div className="flex flex-col gap-3">
+            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+              Brush Shape
+            </span>
+            <div className="flex flex-wrap gap-3">{brushShapeButtons}</div>
+          </div>
+        </>
+      )}
+
+      <div className="flex flex-col gap-3">
+        <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+          Palette Theme
+        </span>
+        <div className="relative w-full max-w-sm" ref={paletteMenuRef}>
+          <button
+            type="button"
+            className="flex w-full items-center justify-between rounded-lg border border-zinc-300 bg-white px-4 py-2 text-left text-sm font-medium text-zinc-800 shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+            onClick={() => setIsPaletteMenuOpen((prev) => !prev)}
+          >
+            <span>{currentPalette.name}</span>
+            <span className="flex items-center gap-1">
+              {[...currentPalette.colors, "transparent"].map((color) => {
+                const isTransparent = color === "transparent";
+                return (
+                  <span
+                    key={`${currentPalette.id}-${color}`}
+                    className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
+                    style={{
+                      backgroundColor: isTransparent ? "transparent" : color,
+                      backgroundImage: isTransparent
+                        ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
+                        : undefined,
+                      backgroundSize: isTransparent ? "8px 8px" : undefined,
+                      backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
+                    }}
+                  />
+                );
+              })}
+            </span>
+          </button>
+          {isPaletteMenuOpen && (
+            <div className="absolute z-10 mt-2 w-full rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+              {PALETTE_THEMES.map((theme) => {
+                const isSelected = theme.id === paletteThemeId;
+                const previewColors = [...theme.colors, "transparent"];
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors focus:outline-none ${isSelected
+                        ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                      }`}
+                    onClick={() => {
+                      const nextColors = [...theme.colors, "transparent"] as PaletteColor[];
+                      setPaletteThemeId(theme.id);
+                      setActiveColor((current) => {
+                        const nextColor = nextColors.includes(current)
+                          ? current
+                          : nextColors[0];
+                        drawValueRef.current = nextColor;
+                        return nextColor;
+                      });
+                      setIsPaletteMenuOpen(false);
+                    }}
+                  >
+                    <span className="font-medium">{theme.name}</span>
+                    <span className="flex items-center gap-1">
+                      {previewColors.map((color) => {
+                        const isTransparent = color === "transparent";
+                        return (
+                          <span
+                            key={`${theme.id}-preview-${color}`}
+                            className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
+                            style={{
+                              backgroundColor: isTransparent ? "transparent" : color,
+                              backgroundImage: isTransparent
+                                ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
+                                : undefined,
+                              backgroundSize: isTransparent ? "8px 8px" : undefined,
+                              backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
+                            }}
+                          />
+                        );
+                      })}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+          Palette
+        </span>
+        <div className="flex flex-wrap gap-3">{paletteButtons}</div>
+      </div>
+      <label className="flex items-center gap-3 text-sm text-zinc-600 dark:text-zinc-300">
+        <input
+          type="checkbox"
+          checked={isPreviewEnabled}
+          onChange={(event) => setIsPreviewEnabled(event.target.checked)}
+          className="h-4 w-4 rounded border-zinc-300 text-black focus:ring-black dark:border-zinc-600 dark:text-white dark:focus:ring-white"
+        />
+        <span className="font-medium text-zinc-900 dark:text-zinc-50">
+          Preview Tool Effects
+        </span>
+      </label>
+
+      <div
+        className="grid p-2 shadow-sm"
+        style={{
+          gridTemplateColumns: `repeat(${GRID_SIZE}, ${CANVAS_PIXEL_SIZE}px)`,
+          gridTemplateRows: `repeat(${GRID_SIZE}, ${CANVAS_PIXEL_SIZE}px)`,
+        }}
+      >
+        {cells}
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={undo}
+          className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+          disabled={!canUndo}
+          aria-label="Undo"
+        >
+          Undo
+        </button>
+        <button
+          type="button"
+          onClick={redo}
+          className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+          disabled={!canRedo}
+          aria-label="Redo"
+        >
+          Redo
+        </button>
+        <button
+          type="button"
+          onClick={reset}
+          className="rounded-full bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
+        >
+          Clear
+        </button>
+        <button
+          type="button"
+          onClick={downloadPng}
+          className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+        >
+          Save PNG
+        </button>
+      </div>
+    </div>
+  );
+}
