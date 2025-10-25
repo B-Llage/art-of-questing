@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { PaintTool, PaletteTheme } from "./PixelPencilTypes";
-import { BucketTool, PencilTool } from "./PixelPencilTools";
+import { BucketTool, EraserTool, PencilTool } from "./PixelPencilTools";
 import Image from 'next/image'
 import { PixelPencilPalettes } from "./PixelPencilPalettes";
 
@@ -17,6 +17,7 @@ const BRUSH_SIZES = [1, 2, 3] as const;
 
 const TOOLS: readonly PaintTool[] = [
   PencilTool,
+  EraserTool,
   BucketTool,
 ] as const;
 
@@ -73,6 +74,11 @@ export function PixelPencil() {
     const found = PALETTE_THEMES.find((theme) => theme.id === paletteThemeId);
     return found ?? PALETTE_THEMES[0];
   }, [paletteThemeId]);
+
+  const currentTool = useMemo(() => {
+    const found = TOOLS.find((item) => item.id === tool);
+    return found ?? PencilTool;
+  }, [tool]);
 
   const paletteColors = useMemo(
     () => [...currentPalette.colors, "transparent"] as PaletteColor[],
@@ -181,10 +187,6 @@ export function PixelPencil() {
     actionInProgressRef.current = false;
     updateHistoryState();
   }, [setPixels, updateHistoryState]);
-
-  useEffect(() => {
-    console.log(undoStackRef.current)
-  }, [pixels])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -357,7 +359,9 @@ export function PixelPencil() {
         floodFill(index, isErase ? null : activeColor);
         return;
       }
-      startStroke(index, isErase ? null : activeColor);
+      const strokeColor =
+        tool === "eraser" ? null : isErase ? null : activeColor;
+      startStroke(index, strokeColor);
     },
     [activeColor, beginAction, floodFill, startStroke, tool],
   );
@@ -419,7 +423,13 @@ export function PixelPencil() {
   }, [hoverIndex, isPreviewEnabled, pixels, tool]);
 
   const brushPreview = useMemo(() => {
-    if (!isPreviewEnabled || hoverIndex === null || tool !== "pencil") return null;
+    if (
+      !isPreviewEnabled ||
+      hoverIndex === null ||
+      (tool !== "pencil" && tool !== "eraser")
+    ) {
+      return null;
+    }
     return new Set(computeBrushIndices(hoverIndex));
   }, [computeBrushIndices, hoverIndex, isPreviewEnabled, tool]);
 
@@ -534,14 +544,17 @@ export function PixelPencil() {
               }`}
             onClick={() => setTool(option.id)}
           >
-            <Image
-              src={option.icon}
-              width={32}
-              height={32}
-              alt="Tool Tip"
-              unoptimized={true}
-              style={{imageRendering:"pixelated"}}
-            />
+            <div className="flex flex-col items-center gap-2">
+              <Image
+                src={option.icon}
+                width={32}
+                height={32}
+                alt={`${option.label} icon`}
+                unoptimized
+                style={{ imageRendering: "pixelated" }}
+              />
+              <span>{option.label}</span>
+            </div>
 
           </button>
 
@@ -644,114 +657,119 @@ export function PixelPencil() {
         </div>
         <div className="flex flex-wrap gap-3">{toolButtons}</div>
       </div>
-      {tool === "pencil" && (
-        <>
-          <div className="flex flex-col gap-3">
-            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-              Brush Size
-            </span>
-            <div className="flex flex-wrap gap-3">{brushSizeButtons}</div>
-          </div>
-          <div className="flex flex-col gap-3">
-            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-              Brush Shape
-            </span>
-            <div className="flex flex-wrap gap-3">{brushShapeButtons}</div>
-          </div>
-        </>
+      {currentTool.settings.brushSize && (
+        <div className="flex flex-col gap-3">
+          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+            Brush Size
+          </span>
+          <div className="flex flex-wrap gap-3">{brushSizeButtons}</div>
+        </div>
       )}
 
-      <div className="flex flex-col gap-3">
-        <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-          Palette Theme
-        </span>
-        <div className="relative w-full max-w-sm" ref={paletteMenuRef}>
-          <button
-            type="button"
-            className="flex w-full items-center justify-between rounded-lg border border-zinc-300 bg-white px-4 py-2 text-left text-sm font-medium text-zinc-800 shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-            onClick={() => setIsPaletteMenuOpen((prev) => !prev)}
-          >
-            <span>{currentPalette.name}</span>
-            <span className="flex items-center gap-1">
-              {[...currentPalette.colors, "transparent"].map((color) => {
-                const isTransparent = color === "transparent";
-                return (
-                  <span
-                    key={`${currentPalette.id}-${color}`}
-                    className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
-                    style={{
-                      backgroundColor: isTransparent ? "transparent" : color,
-                      backgroundImage: isTransparent
-                        ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
-                        : undefined,
-                      backgroundSize: isTransparent ? "8px 8px" : undefined,
-                      backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
-                    }}
-                  />
-                );
-              })}
-            </span>
-          </button>
-          {isPaletteMenuOpen && (
-            <div className="absolute z-10 mt-2 w-full rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-              {PALETTE_THEMES.map((theme) => {
-                const isSelected = theme.id === paletteThemeId;
-                const previewColors = [...theme.colors, "transparent"];
-                return (
-                  <button
-                    key={theme.id}
-                    type="button"
-                    className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors focus:outline-none ${isSelected
-                        ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
-                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                      }`}
-                    onClick={() => {
-                      const nextColors = [...theme.colors, "transparent"] as PaletteColor[];
-                      setPaletteThemeId(theme.id);
-                      setActiveColor((current) => {
-                        const nextColor = nextColors.includes(current)
-                          ? current
-                          : nextColors[0];
-                        drawValueRef.current = nextColor;
-                        return nextColor;
-                      });
-                      setIsPaletteMenuOpen(false);
-                    }}
-                  >
-                    <span className="font-medium">{theme.name}</span>
-                    <span className="flex items-center gap-1">
-                      {previewColors.map((color) => {
-                        const isTransparent = color === "transparent";
-                        return (
-                          <span
-                            key={`${theme.id}-preview-${color}`}
-                            className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
-                            style={{
-                              backgroundColor: isTransparent ? "transparent" : color,
-                              backgroundImage: isTransparent
-                                ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
-                                : undefined,
-                              backgroundSize: isTransparent ? "8px 8px" : undefined,
-                              backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
-                            }}
-                          />
-                        );
-                      })}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+      {currentTool.settings.brushShape && (
+        <div className="flex flex-col gap-3">
+          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+            Brush Shape
+          </span>
+          <div className="flex flex-wrap gap-3">{brushShapeButtons}</div>
         </div>
-      </div>
+      )}
+      {currentTool.settings.paletteTheme && (
+        <div className="flex flex-col gap-3">
+          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+            Palette Theme
+          </span>
+          <div className="relative w-full max-w-sm" ref={paletteMenuRef}>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between rounded-lg border border-zinc-300 bg-white px-4 py-2 text-left text-sm font-medium text-zinc-800 shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+              onClick={() => setIsPaletteMenuOpen((prev) => !prev)}
+            >
+              <span>{currentPalette.name}</span>
+              <span className="flex items-center gap-1">
+                {[...currentPalette.colors, "transparent"].map((color) => {
+                  const isTransparent = color === "transparent";
+                  return (
+                    <span
+                      key={`${currentPalette.id}-${color}`}
+                      className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
+                      style={{
+                        backgroundColor: isTransparent ? "transparent" : color,
+                        backgroundImage: isTransparent
+                          ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
+                          : undefined,
+                        backgroundSize: isTransparent ? "8px 8px" : undefined,
+                        backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
+                      }}
+                    />
+                  );
+                })}
+              </span>
+            </button>
+            {isPaletteMenuOpen && (
+              <div className="absolute z-10 mt-2 w-full rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                {PALETTE_THEMES.map((theme) => {
+                  const isSelected = theme.id === paletteThemeId;
+                  const previewColors = [...theme.colors, "transparent"];
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors focus:outline-none ${
+                        isSelected
+                          ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+                          : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                      }`}
+                      onClick={() => {
+                        const nextColors = [...theme.colors, "transparent"] as PaletteColor[];
+                        setPaletteThemeId(theme.id);
+                        setActiveColor((current) => {
+                          const nextColor = nextColors.includes(current)
+                            ? current
+                            : nextColors[0];
+                          drawValueRef.current = nextColor;
+                          return nextColor;
+                        });
+                        setIsPaletteMenuOpen(false);
+                      }}
+                    >
+                      <span className="font-medium">{theme.name}</span>
+                      <span className="flex items-center gap-1">
+                        {previewColors.map((color) => {
+                          const isTransparent = color === "transparent";
+                          return (
+                            <span
+                              key={`${theme.id}-preview-${color}`}
+                              className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
+                              style={{
+                                backgroundColor: isTransparent ? "transparent" : color,
+                                backgroundImage: isTransparent
+                                  ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
+                                  : undefined,
+                                backgroundSize: isTransparent ? "8px 8px" : undefined,
+                                backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
+                              }}
+                            />
+                          );
+                        })}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
-      <div className="flex flex-col gap-3">
-        <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-          Palette
-        </span>
-        <div className="flex flex-wrap gap-3">{paletteButtons}</div>
-      </div>
+      {currentTool.settings.palette && (
+        <div className="flex flex-col gap-3">
+          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+            Palette
+          </span>
+          <div className="flex flex-wrap gap-3">{paletteButtons}</div>
+        </div>
+      )}
       <label className="flex items-center gap-3 text-sm text-zinc-600 dark:text-zinc-300">
         <input
           type="checkbox"
