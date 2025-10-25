@@ -12,7 +12,7 @@ const CANVAS_PIXEL_SIZE = 16; // render size for each cell in pixels
 const TRANSPARENT_LIGHT = "#d4d4d8";
 const TRANSPARENT_DARK = "#9ca3af";
 
-const MAX_HISTORY = 5;
+const MAX_HISTORY = 15;
 const BRUSH_SIZES = [1, 2, 3] as const;
 
 const TOOLS: readonly PaintTool[] = [
@@ -64,6 +64,7 @@ export function PixelPencil() {
   const [canRedo, setCanRedo] = useState(false);
   const isDrawingRef = useRef(false);
   const drawValueRef = useRef<PixelValue>(PALETTE_THEMES[0].colors[0]);
+  const lastPaintedIndexRef = useRef<number | null>(null);
   const pixelsRef = useRef(pixels);
   const undoStackRef = useRef<PixelValue[][]>([]);
   const redoStackRef = useRef<PixelValue[][]>([]);
@@ -280,21 +281,77 @@ export function PixelPencil() {
     (index: number, nextValue: PixelValue) => {
       isDrawingRef.current = true;
       drawValueRef.current = nextValue;
+      lastPaintedIndexRef.current = index;
       applyBrush(index, drawValueRef.current);
     },
     [applyBrush],
   );
+
+  const computeLineIndices = useCallback((startIndex: number, endIndex: number) => {
+    if (startIndex === endIndex) {
+      return [startIndex];
+    }
+
+    const coordinatesToIndex = (x: number, y: number) => y * GRID_SIZE + x;
+    let x0 = startIndex % GRID_SIZE;
+    let y0 = Math.floor(startIndex / GRID_SIZE);
+    const x1 = endIndex % GRID_SIZE;
+    const y1 = Math.floor(endIndex / GRID_SIZE);
+
+    const result: number[] = [];
+
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+
+    // Bresenham's line algorithm
+    while (true) {
+      result.push(coordinatesToIndex(x0, y0));
+      if (x0 === x1 && y0 === y1) {
+        break;
+      }
+      const e2 = 2 * err;
+      if (e2 > -dy) {
+        err -= dy;
+        x0 += sx;
+      }
+      if (e2 < dx) {
+        err += dx;
+        y0 += sy;
+      }
+    }
+
+    return result;
+  }, []);
 
   const continueStroke = useCallback(
     (index: number) => {
       if (!isDrawingRef.current) return;
-      applyBrush(index, drawValueRef.current);
+      const previousIndex = lastPaintedIndexRef.current;
+      if (previousIndex === null) {
+        applyBrush(index, drawValueRef.current);
+        lastPaintedIndexRef.current = index;
+        return;
+      }
+      if (previousIndex === index) {
+        applyBrush(index, drawValueRef.current);
+        lastPaintedIndexRef.current = index;
+        return;
+      }
+      const line = computeLineIndices(previousIndex, index);
+      for (let position = 1; position < line.length; position += 1) {
+        applyBrush(line[position], drawValueRef.current);
+      }
+      lastPaintedIndexRef.current = index;
     },
-    [applyBrush],
+    [applyBrush, computeLineIndices],
   );
 
   const stopStroke = useCallback(() => {
     isDrawingRef.current = false;
+    lastPaintedIndexRef.current = null;
     finalizeAction();
   }, [finalizeAction]);
 
