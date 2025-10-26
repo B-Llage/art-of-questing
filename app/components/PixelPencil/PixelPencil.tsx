@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { PaintTool, PaletteTheme } from "./PixelPencilTypes";
-import { BucketTool, ColorPickerTool, EraserTool, PencilTool } from "./PixelPencilTools";
+import { BucketTool, ColorPickerTool, EraserTool, LineTool, PencilTool } from "./PixelPencilTools";
 import Image from 'next/image'
 import { PixelPencilPalettes } from "./PixelPencilPalettes";
 import { usePixelPencilSettings } from "./PixelPencilSettingsContext";
@@ -25,8 +25,9 @@ export const BRUSH_SIZES = [1, 2, 3] as const;
 const TOOLS: readonly PaintTool[] = [
   PencilTool,
   EraserTool,
-  BucketTool,
   ColorPickerTool,
+  BucketTool,
+  LineTool,
 ] as const;
 
 const PALETTE_THEMES: readonly PaletteTheme[] = PixelPencilPalettes;
@@ -83,6 +84,8 @@ export function PixelPencil() {
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
+  const [lineStartIndex, setLineStartIndex] = useState<number | null>(null);
+  const [linePreview, setLinePreview] = useState<Set<number> | null>(null);
   const [availableWidth, setAvailableWidth] = useState<number>(0);
   const currentPalette = useMemo(() => {
     const found = PALETTE_THEMES.find((theme) => theme.id === paletteThemeId);
@@ -134,6 +137,16 @@ export function PixelPencil() {
       window.removeEventListener("resize", updateSize);
     };
   }, []);
+
+  useEffect(() => {
+    if (tool !== "line") {
+      setLineStartIndex(null);
+      setLinePreview(null);
+      activePointerIdRef.current = null;
+      isDrawingRef.current = false;
+      lastPaintedIndexRef.current = null;
+    }
+  }, [tool]);
 
   const updateHistoryState = useCallback(() => {
     setCanUndo(undoStackRef.current.length > 0);
@@ -310,6 +323,48 @@ export function PixelPencil() {
     [computeBrushIndices],
   );
 
+  const applyLinePath = useCallback(
+    (path: number[], value: PixelValue) => {
+      if (!path.length) return;
+      setPixels((prev) => {
+        let changed = false;
+        const next = [...prev];
+
+        for (const pathIndex of path) {
+          const indices = computeBrushIndices(pathIndex);
+          for (const target of indices) {
+            if (next[target] === value) continue;
+            next[target] = value;
+            changed = true;
+          }
+        }
+
+        if (!changed) {
+          return prev;
+        }
+
+        pixelsRef.current = next;
+        actionModifiedRef.current = true;
+        return next;
+      });
+    },
+    [computeBrushIndices, setPixels],
+  );
+
+  const buildLinePreview = useCallback(
+    (path: number[]) => {
+      const preview = new Set<number>();
+      for (const index of path) {
+        const indices = computeBrushIndices(index);
+        for (const target of indices) {
+          preview.add(target);
+        }
+      }
+      return preview;
+    },
+    [computeBrushIndices],
+  );
+
   const startStroke = useCallback(
     (index: number, nextValue: PixelValue) => {
       isDrawingRef.current = true;
@@ -386,6 +441,8 @@ export function PixelPencil() {
     isDrawingRef.current = false;
     lastPaintedIndexRef.current = null;
     activePointerIdRef.current = null;
+    setLineStartIndex(null);
+    setLinePreview(null);
     finalizeAction();
   }, [finalizeAction]);
 
@@ -439,6 +496,29 @@ export function PixelPencil() {
     return () => window.removeEventListener("pointerup", handlePointerUp);
   }, [stopStroke]);
 
+  const resolveIndexFromPointerEvent = useCallback(
+    (event: ReactPointerEvent<Element>) => {
+      if (!gridRef.current || displayCellSize <= 0) return null;
+      const rect = gridRef.current.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const column = Math.floor(x / displayCellSize);
+      const row = Math.floor(y / displayCellSize);
+      if (
+        Number.isNaN(column) ||
+        Number.isNaN(row) ||
+        column < 0 ||
+        column >= GRID_SIZE ||
+        row < 0 ||
+        row >= GRID_SIZE
+      ) {
+        return null;
+      }
+      return row * GRID_SIZE + column;
+    },
+    [displayCellSize],
+  );
+
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>, index: number) => {
       event.preventDefault();
@@ -461,17 +541,41 @@ export function PixelPencil() {
         floodFill(index, isErase ? null : activeColor);
         return;
       }
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-        activePointerIdRef.current = event.pointerId;
-      } catch {
-        activePointerIdRef.current = event.pointerId;
-      }
       const strokeColor =
         tool === "eraser" ? null : isErase ? null : activeColor;
+
+      if (tool === "line") {
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          activePointerIdRef.current = event.pointerId;
+        } catch {
+          activePointerIdRef.current = event.pointerId;
+        }
+        isDrawingRef.current = true;
+        drawValueRef.current = strokeColor;
+        lastPaintedIndexRef.current = null;
+        setLineStartIndex(index);
+        if (previewToolEffects) {
+          const initialPath = computeLineIndices(index, index);
+          setLinePreview(buildLinePreview(initialPath));
+        } else {
+          setLinePreview(null);
+        }
+        return;
+      }
+
       startStroke(index, strokeColor);
     },
-    [activeColor, beginAction, floodFill, startStroke, tool],
+    [
+      activeColor,
+      beginAction,
+      buildLinePreview,
+      computeLineIndices,
+      floodFill,
+      previewToolEffects,
+      startStroke,
+      tool,
+    ],
   );
 
   const handlePointerEnter = useCallback(
@@ -479,9 +583,17 @@ export function PixelPencil() {
       setHoverIndex(index);
       if (!isDrawingRef.current) return;
       event.preventDefault();
+      if (tool === "line") {
+        if (lineStartIndex === null) return;
+        if (previewToolEffects) {
+          const path = computeLineIndices(lineStartIndex, index);
+          setLinePreview(buildLinePreview(path));
+        }
+        return;
+      }
       continueStroke(index);
     },
-    [continueStroke],
+    [buildLinePreview, computeLineIndices, continueStroke, lineStartIndex, previewToolEffects, tool],
   );
 
   const handlePointerMove = useCallback(
@@ -493,46 +605,59 @@ export function PixelPencil() {
       ) {
         return;
       }
-      if (!gridRef.current || displayCellSize <= 0) return;
-      const rect = gridRef.current.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      if (Number.isNaN(x) || Number.isNaN(y)) return;
-      const column = Math.floor(x / displayCellSize);
-      const row = Math.floor(y / displayCellSize);
-      if (
-        column < 0 ||
-        column >= GRID_SIZE ||
-        row < 0 ||
-        row >= GRID_SIZE
-      ) {
+      if (tool === "line") {
+        if (lineStartIndex === null) return;
+        const index = resolveIndexFromPointerEvent(event);
+        if (index === null) return;
+        event.preventDefault();
+        setHoverIndex(index);
+        if (previewToolEffects) {
+          const path = computeLineIndices(lineStartIndex, index);
+          setLinePreview(buildLinePreview(path));
+        }
         return;
       }
-      const index = row * GRID_SIZE + column;
-      event.preventDefault();
-      setHoverIndex(index);
-      continueStroke(index);
     },
-    [continueStroke, displayCellSize, setHoverIndex],
+    [buildLinePreview, computeLineIndices, lineStartIndex, previewToolEffects, resolveIndexFromPointerEvent, tool],
   );
 
   const handlePointerUp = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      if (typeof event.currentTarget.hasPointerCapture === "function" && event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      if (tool === "line" && lineStartIndex !== null) {
+        const eventIndex = resolveIndexFromPointerEvent(event);
+        const endIndex =
+          eventIndex ?? hoverIndex ?? lineStartIndex;
+        const path = computeLineIndices(lineStartIndex, endIndex);
+        applyLinePath(path, drawValueRef.current);
+        setLineStartIndex(null);
+        setLinePreview(null);
       }
       stopStroke();
       setHoverIndex(null);
     },
-    [stopStroke],
+    [
+      applyLinePath,
+      computeLineIndices,
+      hoverIndex,
+      lineStartIndex,
+      resolveIndexFromPointerEvent,
+      stopStroke,
+      tool,
+    ],
   );
 
   const handlePointerLeave = useCallback(() => {
     if (!isDrawingRef.current) {
       setHoverIndex(null);
+      if (tool === "line") {
+        setLinePreview(null);
+      }
     }
-  }, []);
+  }, [tool]);
 
   // Render matrix once so React keys stay stable.
   const bucketPreview = useMemo(() => {
@@ -586,6 +711,14 @@ export function PixelPencil() {
         const patternColor =
           (x + y) % 2 === 0 ? TRANSPARENT_LIGHT : TRANSPARENT_DARK;
         const fillColor = isTransparent ? patternColor : (pixel as PaletteColor);
+        const isLinePreviewCell = linePreview?.has(index) ?? false;
+        const showLinePreview = previewToolEffects && isLinePreviewCell;
+        const previewValue = showLinePreview ? drawValueRef.current : null;
+        const previewFillColor =
+          previewValue === null || previewValue === "transparent"
+            ? patternColor
+            : (previewValue as PaletteColor);
+        const cellBackgroundColor = showLinePreview ? previewFillColor : fillColor;
         return (
           <button
             key={key}
@@ -594,15 +727,17 @@ export function PixelPencil() {
             style={{
               width: `${displayCellSize}px`,
               height: `${displayCellSize}px`,
-              backgroundColor: fillColor,
+              backgroundColor: cellBackgroundColor,
               opacity:
                 tool === "bucket"
                   ? bucketPreview?.has(index)
                     ? 0.7
                     : 1
-                  : brushPreview?.has(index)
+                  : showLinePreview
                     ? 0.7
-                    : 1,
+                    : brushPreview?.has(index)
+                      ? 0.7
+                      : 1,
             }}
             onContextMenu={(event) => event.preventDefault()}
             onPointerDown={(event) => handlePointerDown(event, index)}
@@ -622,6 +757,8 @@ export function PixelPencil() {
       pixels,
       bucketPreview,
       brushPreview,
+      linePreview,
+      previewToolEffects,
       tool,
       displayCellSize,
     ],

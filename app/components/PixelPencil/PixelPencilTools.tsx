@@ -13,6 +13,19 @@ export const PencilTool: PaintTool = {
   },
 };
 
+export const LineTool: PaintTool = {
+  id: "line",
+  label: "Line",
+  icon: "/icons/tools/Line.png",
+  settings: {
+    brushSize: true,
+    brushShape: true,
+    paletteTheme: true,
+    palette: true,
+    selectedColor: true,
+  },
+};
+
 export const ColorPickerTool: PaintTool = {
   id: "picker",
   label: "Picker",
