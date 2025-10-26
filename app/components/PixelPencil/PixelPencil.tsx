@@ -6,9 +6,12 @@ import { PaintTool, PaletteTheme } from "./PixelPencilTypes";
 import { BucketTool, ColorPickerTool, EraserTool, PencilTool } from "./PixelPencilTools";
 import Image from 'next/image'
 import { PixelPencilPalettes } from "./PixelPencilPalettes";
-import { CANVAS_PIXEL_SIZE_OPTIONS, usePixelPencilSettings } from "./PixelPencilSettingsContext";
+import { usePixelPencilSettings } from "./PixelPencilSettingsContext";
 import { SettingsModal } from "./Settings/SettingsModal";
 import { ActionRequestModal } from "../shared/ActionRequestModal";
+import { ColorPalette } from "./Settings/Tool/ColorPalette";
+import { SelectedColor } from "./Settings/Tool/SelectedColor";
+import { PaletteThemeSelector } from "./Settings/Tool/PaletteThemeSelector";
 
 const GRID_SIZE = 32;
 const TRANSPARENT_LIGHT = "#d4d4d8";
@@ -31,8 +34,8 @@ const BRUSH_SHAPES = [
   { id: "circle", label: "Circle" },
 ] as const;
 
-type PaletteColor = (typeof PALETTE_THEMES)[number]["colors"][number] | "transparent";
-type PixelValue = PaletteColor | null;
+export type PaletteColor = (typeof PALETTE_THEMES)[number]["colors"][number] | "transparent";
+export type PixelValue = PaletteColor | null;
 type Tool = (typeof TOOLS)[number]["id"];
 type BrushShape = (typeof BRUSH_SHAPES)[number]["id"];
 
@@ -67,7 +70,6 @@ export function PixelPencil() {
   const [tool, setTool] = useState<Tool>("pencil");
   const [brushSize, setBrushSize] = useState<(typeof BRUSH_SIZES)[number]>(1);
   const [brushShape, setBrushShape] = useState<BrushShape>("square");
-  const [isPaletteMenuOpen, setIsPaletteMenuOpen] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -81,7 +83,6 @@ export function PixelPencil() {
   const redoStackRef = useRef<PixelValue[][]>([]);
   const actionInProgressRef = useRef(false);
   const actionModifiedRef = useRef(false);
-  const paletteMenuRef = useRef<HTMLDivElement | null>(null);
   const currentPalette = useMemo(() => {
     const found = PALETTE_THEMES.find((theme) => theme.id === paletteThemeId);
     return found ?? PALETTE_THEMES[0];
@@ -97,15 +98,6 @@ export function PixelPencil() {
     [currentPalette],
   );
 
-  const canvasSizeOptions = useMemo(
-    () =>
-      CANVAS_PIXEL_SIZE_OPTIONS.map((size) => ({
-        size,
-        label: size === 13 ? "Small" : size === 16 ? "Medium" : "Large",
-      })),
-    [],
-  );
-
   useEffect(() => {
     pixelsRef.current = pixels;
   }, [pixels]);
@@ -119,19 +111,7 @@ export function PixelPencil() {
     updateHistoryState();
   }, [updateHistoryState]);
 
-  useEffect(() => {
-    if (!isPaletteMenuOpen) return;
-    const handleClickAway = (event: MouseEvent) => {
-      if (
-        paletteMenuRef.current &&
-        !paletteMenuRef.current.contains(event.target as Node)
-      ) {
-        setIsPaletteMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickAway);
-    return () => document.removeEventListener("mousedown", handleClickAway);
-  }, [isPaletteMenuOpen]);
+
 
   const recordSnapshot = useCallback(() => {
     const snapshot = [...pixelsRef.current];
@@ -737,34 +717,6 @@ export function PixelPencil() {
     [brushShape],
   );
 
-  const paletteButtons = useMemo(
-    () =>
-      paletteColors.map((color) => {
-        const isTransparent = color === "transparent";
-        return (
-          <button
-            key={color}
-            type="button"
-            aria-label={`Use color ${color}`}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-300 transition-all hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-            style={{
-              backgroundColor: isTransparent ? "transparent" : color,
-              backgroundImage: isTransparent
-                ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
-                : undefined,
-              backgroundSize: isTransparent ? "8px 8px" : undefined,
-              backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
-            }}
-            onClick={() => {
-              setActiveColor(color);
-              drawValueRef.current = color;
-            }}
-          />
-        );
-      }),
-    [paletteColors],
-  );
-
   const selectedColorStyles = useMemo(() => {
     const isTransparent = activeColor === "transparent";
     return {
@@ -870,112 +822,20 @@ export function PixelPencil() {
                 <div className="flex flex-wrap gap-3">{brushShapeButtons}</div>
               </div>
             )}
-
             {currentTool.settings.paletteTheme && (
-              <div className="flex flex-col gap-3">
-                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                  Palette Theme
-                </span>
-                <div className="relative w-full" ref={paletteMenuRef}>
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between rounded-lg border border-zinc-300 bg-white px-4 py-2 text-left text-sm font-medium text-zinc-800 shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-                    onClick={() => setIsPaletteMenuOpen((prev) => !prev)}
-                  >
-                    <span>{currentPalette.name}</span>
-                    <span className="flex items-center gap-1">
-                      {[...currentPalette.colors, "transparent"].map((color) => {
-                        const isTransparent = color === "transparent";
-                        return (
-                          <span
-                            key={`${currentPalette.id}-${color}`}
-                            className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
-                            style={{
-                              backgroundColor: isTransparent ? "transparent" : color,
-                              backgroundImage: isTransparent
-                                ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
-                                : undefined,
-                              backgroundSize: isTransparent ? "8px 8px" : undefined,
-                              backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
-                            }}
-                          />
-                        );
-                      })}
-                    </span>
-                  </button>
-                  {isPaletteMenuOpen && (
-                    <div className="absolute z-10 mt-2 w-full rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-                      {PALETTE_THEMES.map((theme) => {
-                        const isSelected = theme.id === paletteThemeId;
-                        const previewColors = [...theme.colors, "transparent"];
-                        return (
-                          <button
-                            key={theme.id}
-                            type="button"
-                            className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors focus:outline-none ${isSelected
-                              ? "bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
-                              : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                              }`}
-                            onClick={() => {
-                              const nextColors = [...theme.colors, "transparent"] as PaletteColor[];
-                              setPaletteThemeId(theme.id);
-                              setActiveColor((current) => {
-                                const nextColor = nextColors.includes(current)
-                                  ? current
-                                  : nextColors[0];
-                                drawValueRef.current = nextColor;
-                                return nextColor;
-                              });
-                              setIsPaletteMenuOpen(false);
-                            }}
-                          >
-                            <span className="font-medium">{theme.name}</span>
-                            <span className="flex items-center gap-1">
-                              {previewColors.map((color) => {
-                                const isTransparent = color === "transparent";
-                                return (
-                                  <span
-                                    key={`${theme.id}-preview-${color}`}
-                                    className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
-                                    style={{
-                                      backgroundColor: isTransparent ? "transparent" : color,
-                                      backgroundImage: isTransparent
-                                        ? "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)"
-                                        : undefined,
-                                      backgroundSize: isTransparent ? "8px 8px" : undefined,
-                                      backgroundPosition: isTransparent ? "0 0, 4px 4px" : undefined,
-                                    }}
-                                  />
-                                );
-                              })}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <PaletteThemeSelector
+                paletteThemeId={paletteThemeId}
+                currentPalette={currentPalette}
+                drawValueRef={drawValueRef} 
+                setPaletteThemeId={setPaletteThemeId}
+                setActiveColor={setActiveColor}
+                />
             )}
             {currentTool.settings.palette && (
-              <div className="flex flex-col gap-3">
-                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                  Palette
-                </span>
-                <div className="flex flex-wrap gap-3">{paletteButtons}</div>
-              </div>
+              <ColorPalette paletteColors={paletteColors} setActiveColor={setActiveColor} drawValueRef={drawValueRef} />
             )}
             {currentTool.settings.selectedColor && (
-              <div className="flex flex-col gap-3">
-                <span className="text-sm text-zinc-600 dark:text-zinc-300">
-                  Selected Color
-                </span>
-                <span
-                  className="h-16 w-full rounded-md border border-zinc-300 shadow-inner dark:border-zinc-600"
-                  style={selectedColorStyles}
-                  aria-label="Selected color preview"
-                />
-              </div>
+              <SelectedColor selectedColorStyles={selectedColorStyles} />
             )}
           </div>
         </aside>
