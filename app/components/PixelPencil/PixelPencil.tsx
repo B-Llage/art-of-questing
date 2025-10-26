@@ -80,6 +80,10 @@ export function PixelPencil() {
   const redoStackRef = useRef<PixelValue[][]>([]);
   const actionInProgressRef = useRef(false);
   const actionModifiedRef = useRef(false);
+  const gridWrapperRef = useRef<HTMLDivElement | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const activePointerIdRef = useRef<number | null>(null);
+  const [availableWidth, setAvailableWidth] = useState<number>(0);
   const currentPalette = useMemo(() => {
     const found = PALETTE_THEMES.find((theme) => theme.id === paletteThemeId);
     return found ?? PALETTE_THEMES[0];
@@ -95,9 +99,41 @@ export function PixelPencil() {
     [currentPalette],
   );
 
+  const displayCellSize = useMemo(() => {
+    if (!availableWidth) {
+      return canvasPixelSize;
+    }
+    const paddingOffset = 8; // account for grid padding (p-2)
+    const effectiveWidth = Math.max(0, availableWidth - paddingOffset);
+    const maxCellSize = Math.floor(effectiveWidth / GRID_SIZE);
+    if (!Number.isFinite(maxCellSize) || maxCellSize <= 0) {
+      return canvasPixelSize;
+    }
+    const clamped = Math.max(4, maxCellSize);
+    return Math.min(canvasPixelSize, clamped);
+  }, [availableWidth, canvasPixelSize]);
+
   useEffect(() => {
     pixelsRef.current = pixels;
   }, [pixels]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !gridWrapperRef.current) {
+      return;
+    }
+    const updateSize = () => {
+      if (!gridWrapperRef.current) return;
+      setAvailableWidth(gridWrapperRef.current.clientWidth);
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(gridWrapperRef.current);
+    window.addEventListener("resize", updateSize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
+  }, []);
 
   const updateHistoryState = useCallback(() => {
     setCanUndo(undoStackRef.current.length > 0);
@@ -349,6 +385,7 @@ export function PixelPencil() {
   const stopStroke = useCallback(() => {
     isDrawingRef.current = false;
     lastPaintedIndexRef.current = null;
+    activePointerIdRef.current = null;
     finalizeAction();
   }, [finalizeAction]);
 
@@ -424,6 +461,12 @@ export function PixelPencil() {
         floodFill(index, isErase ? null : activeColor);
         return;
       }
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        activePointerIdRef.current = event.pointerId;
+      } catch {
+        activePointerIdRef.current = event.pointerId;
+      }
       const strokeColor =
         tool === "eraser" ? null : isErase ? null : activeColor;
       startStroke(index, strokeColor);
@@ -441,9 +484,44 @@ export function PixelPencil() {
     [continueStroke],
   );
 
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!isDrawingRef.current) return;
+      if (
+        activePointerIdRef.current !== null &&
+        event.pointerId !== activePointerIdRef.current
+      ) {
+        return;
+      }
+      if (!gridRef.current || displayCellSize <= 0) return;
+      const rect = gridRef.current.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      if (Number.isNaN(x) || Number.isNaN(y)) return;
+      const column = Math.floor(x / displayCellSize);
+      const row = Math.floor(y / displayCellSize);
+      if (
+        column < 0 ||
+        column >= GRID_SIZE ||
+        row < 0 ||
+        row >= GRID_SIZE
+      ) {
+        return;
+      }
+      const index = row * GRID_SIZE + column;
+      event.preventDefault();
+      setHoverIndex(index);
+      continueStroke(index);
+    },
+    [continueStroke, displayCellSize, setHoverIndex],
+  );
+
   const handlePointerUp = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
       stopStroke();
       setHoverIndex(null);
     },
@@ -512,10 +590,10 @@ export function PixelPencil() {
           <button
             key={key}
             type="button"
-            className="relative border border-zinc-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+            className="relative border border-zinc-200 touch-none select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
             style={{
-              width: `${canvasPixelSize}px`,
-              height: `${canvasPixelSize}px`,
+              width: `${displayCellSize}px`,
+              height: `${displayCellSize}px`,
               backgroundColor: fillColor,
               opacity:
                 tool === "bucket"
@@ -529,6 +607,7 @@ export function PixelPencil() {
             onContextMenu={(event) => event.preventDefault()}
             onPointerDown={(event) => handlePointerDown(event, index)}
             onPointerEnter={(event) => handlePointerEnter(event, index)}
+            onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerLeave={handlePointerLeave}
           />
@@ -537,13 +616,14 @@ export function PixelPencil() {
     [
       handlePointerDown,
       handlePointerEnter,
+      handlePointerMove,
       handlePointerLeave,
       handlePointerUp,
       pixels,
       bucketPreview,
       brushPreview,
       tool,
-      canvasPixelSize,
+      displayCellSize,
     ],
   );
 
@@ -686,7 +766,7 @@ export function PixelPencil() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center gap-4 text-sm text-zinc-600 dark:text-zinc-300">
+      <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-zinc-600 dark:text-zinc-300">
         <span>Left click to draw or fill</span>
         <span>Alt/Ctrl/⌘ or right click to erase</span>
         <span>Bucket fills enclosed regions</span>
@@ -703,16 +783,19 @@ export function PixelPencil() {
               <div className="flex flex-wrap gap-3">{toolButtons}</div>
             </div>
           </div>
-          <div
-            className="grid self-start rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
-            style={{
-              gridTemplateColumns: `repeat(${GRID_SIZE}, ${canvasPixelSize}px)`,
-              gridTemplateRows: `repeat(${GRID_SIZE}, ${canvasPixelSize}px)`,
-            }}
-          >
-            {cells}
+          <div ref={gridWrapperRef} className="w-full overflow-hidden touch-none">
+            <div
+              ref={gridRef}
+              className="grid mx-auto max-w-full rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
+              style={{
+                gridTemplateColumns: `repeat(${GRID_SIZE}, ${displayCellSize}px)`,
+                gridTemplateRows: `repeat(${GRID_SIZE}, ${displayCellSize}px)`,
+                }}
+            >
+              {cells}
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               type="button"
               onClick={undo}
