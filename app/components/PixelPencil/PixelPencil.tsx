@@ -12,13 +12,15 @@ import { ActionRequestModal } from "../shared/ActionRequestModal";
 import { ColorPalette } from "./Settings/Tool/ColorPalette";
 import { SelectedColor } from "./Settings/Tool/SelectedColor";
 import { PaletteThemeSelector } from "./Settings/Tool/PaletteThemeSelector";
+import { BrushSizeSelector } from "./Settings/Tool/BrushSizeSelector";
+import { BrushShapeSelector } from "./Settings/Tool/BrushShapeSelector";
 
 const GRID_SIZE = 32;
 const TRANSPARENT_LIGHT = "#d4d4d8";
 const TRANSPARENT_DARK = "#9ca3af";
 
 const MAX_HISTORY = 15;
-const BRUSH_SIZES = [1, 2, 3] as const;
+export const BRUSH_SIZES = [1, 2, 3] as const;
 
 const TOOLS: readonly PaintTool[] = [
   PencilTool,
@@ -37,7 +39,7 @@ const BRUSH_SHAPES = [
 export type PaletteColor = (typeof PALETTE_THEMES)[number]["colors"][number] | "transparent";
 export type PixelValue = PaletteColor | null;
 type Tool = (typeof TOOLS)[number]["id"];
-type BrushShape = (typeof BRUSH_SHAPES)[number]["id"];
+export type BrushShape = (typeof BRUSH_SHAPES)[number]["id"];
 
 const makeEmptyGrid = (): PixelValue[] =>
   new Array(GRID_SIZE * GRID_SIZE).fill(null) as PixelValue[];
@@ -53,12 +55,7 @@ const arePixelsEqual = (a: PixelValue[], b: PixelValue[]) => {
 };
 
 export function PixelPencil() {
-  const {
-    previewToolEffects,
-    setPreviewToolEffects,
-    canvasPixelSize,
-    setCanvasPixelSize,
-  } = usePixelPencilSettings();
+  const { previewToolEffects, canvasPixelSize } = usePixelPencilSettings();
 
   const [pixels, setPixels] = useState<PixelValue[]>(() => makeEmptyGrid());
   const [paletteThemeId, setPaletteThemeId] = useState<
@@ -68,7 +65,7 @@ export function PixelPencil() {
     PALETTE_THEMES[0].colors[0],
   );
   const [tool, setTool] = useState<Tool>("pencil");
-  const [brushSize, setBrushSize] = useState<(typeof BRUSH_SIZES)[number]>(1);
+  const [brushSize, setBrushSize] = useState<number>(1);
   const [brushShape, setBrushShape] = useState<BrushShape>("square");
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [canUndo, setCanUndo] = useState(false);
@@ -675,48 +672,6 @@ export function PixelPencil() {
     [tool],
   );
 
-  const brushSizeButtons = useMemo(
-    () =>
-      BRUSH_SIZES.map((size) => {
-        const isSelected = size === brushSize;
-        return (
-          <button
-            key={size}
-            type="button"
-            className={`rounded-full border border-zinc-300 px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${isSelected
-              ? "bg-black text-white dark:bg-white dark:text-black"
-              : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              }`}
-            onClick={() => setBrushSize(size)}
-          >
-            {size}px
-          </button>
-        );
-      }),
-    [brushSize],
-  );
-
-  const brushShapeButtons = useMemo(
-    () =>
-      BRUSH_SHAPES.map((shape) => {
-        const isSelected = shape.id === brushShape;
-        return (
-          <button
-            key={shape.id}
-            type="button"
-            className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${isSelected
-              ? "bg-black text-white dark:bg-white dark:text-black"
-              : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              }`}
-            onClick={() => setBrushShape(shape.id)}
-          >
-            {shape.label}
-          </button>
-        );
-      }),
-    [brushShape],
-  );
-
   const selectedColorStyles = useMemo(() => {
     const isTransparent = activeColor === "transparent";
     return {
@@ -806,21 +761,19 @@ export function PixelPencil() {
             </span>
 
             {currentTool.settings.brushSize && (
-              <div className="flex flex-col gap-3">
-                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                  Brush Size
-                </span>
-                <div className="flex flex-wrap gap-3">{brushSizeButtons}</div>
-              </div>
+              <BrushSizeSelector
+                options={BRUSH_SIZES}
+                value={brushSize}
+                onChange={setBrushSize}
+              />
             )}
 
             {currentTool.settings.brushShape && (
-              <div className="flex flex-col gap-3">
-                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                  Brush Shape
-                </span>
-                <div className="flex flex-wrap gap-3">{brushShapeButtons}</div>
-              </div>
+              <BrushShapeSelector
+                options={BRUSH_SHAPES}
+                value={brushShape}
+                onChange={setBrushShape}
+              />
             )}
             {currentTool.settings.paletteTheme && (
               <PaletteThemeSelector
