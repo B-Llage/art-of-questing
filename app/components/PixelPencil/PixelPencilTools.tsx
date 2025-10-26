@@ -9,6 +9,16 @@ export const PencilTool: PaintTool = {
     brushShape: true,
     paletteTheme: true,
     palette: true,
+    selectedColor: true,
+  },
+};
+
+export const ColorPickerTool: PaintTool = {
+  id: "picker",
+  label: "Picker",
+  icon: "/icons/tools/ColorPicker.png",
+  settings: {
+    selectedColor: true,
   },
 };
 
@@ -19,6 +29,7 @@ export const BucketTool: PaintTool = {
   settings: {
     paletteTheme: true,
     palette: true,
+    selectedColor: true,
   },
 };
 
@@ -29,5 +40,6 @@ export const EraserTool: PaintTool = {
   settings: {
     brushSize: true,
     brushShape: true,
+    selectedColor: true,
   },
 };

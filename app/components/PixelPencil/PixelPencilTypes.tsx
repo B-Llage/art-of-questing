@@ -7,6 +7,7 @@ export interface PaintTool {
     brushShape?: boolean;
     paletteTheme?: boolean;
     palette?: boolean;
+    selectedColor?: boolean;
   };
 }
 
