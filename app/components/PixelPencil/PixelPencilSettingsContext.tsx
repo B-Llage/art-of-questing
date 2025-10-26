@@ -17,6 +17,8 @@ interface PixelPencilSettingsContextValue {
   setPreviewToolEffects: Dispatch<SetStateAction<boolean>>;
   canvasPixelSize: CanvasPixelSizeOption;
   setCanvasPixelSize: Dispatch<SetStateAction<CanvasPixelSizeOption>>;
+  showPixelGrid: boolean;
+  setShowPixelGrid: Dispatch<SetStateAction<boolean>>;
 }
 
 const PixelPencilSettingsContext =
@@ -30,6 +32,7 @@ export function PixelPencilSettingsProvider({
   const [previewToolEffects, setPreviewToolEffects] = useState(true);
   const [canvasPixelSize, setCanvasPixelSize] =
     useState<CanvasPixelSizeOption>(16);
+  const [showPixelGrid, setShowPixelGrid] = useState(false);
 
   const value = useMemo(
     () => ({
@@ -37,8 +40,10 @@ export function PixelPencilSettingsProvider({
       setPreviewToolEffects,
       canvasPixelSize,
       setCanvasPixelSize,
+      showPixelGrid,
+      setShowPixelGrid,
     }),
-    [previewToolEffects, canvasPixelSize],
+    [previewToolEffects, canvasPixelSize, showPixelGrid],
   );
 
   return (

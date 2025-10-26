@@ -12,6 +12,8 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
         setPreviewToolEffects,
         canvasPixelSize,
         setCanvasPixelSize,
+        showPixelGrid,
+        setShowPixelGrid,
       } = usePixelPencilSettings();
 
         const canvasSizeOptions = useMemo(
@@ -59,6 +61,27 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
                   />
                   <span className="font-medium text-zinc-900 dark:text-zinc-50">
                     Enabled
+                  </span>
+                </label>
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                    Pixel Grid
+                  </span>
+                  <p className="text-sm text-zinc-600 dark:text-zinc-300">
+                    Toggle the borders between individual pixels on the canvas.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={showPixelGrid}
+                    onChange={(event) => setShowPixelGrid(event.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-300 text-black focus:ring-black dark:border-zinc-600 dark:text-white dark:focus:ring-white"
+                  />
+                  <span className="font-medium text-zinc-900 dark:text-zinc-50">
+                    Visible
                   </span>
                 </label>
               </div>

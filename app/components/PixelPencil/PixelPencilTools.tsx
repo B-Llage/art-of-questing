@@ -11,6 +11,7 @@ export const PencilTool: PaintTool = {
     palette: true,
     selectedColor: true,
   },
+  hotkey: "q",
 };
 
 export const LineTool: PaintTool = {
@@ -24,6 +25,7 @@ export const LineTool: PaintTool = {
     palette: true,
     selectedColor: true,
   },
+  hotkey: "l",
 };
 
 export const ShapeTool: PaintTool = {
@@ -37,6 +39,7 @@ export const ShapeTool: PaintTool = {
     palette: true,
     selectedColor: true,
   },
+  hotkey: "s",
 };
 
 export const ColorPickerTool: PaintTool = {
@@ -46,6 +49,7 @@ export const ColorPickerTool: PaintTool = {
   settings: {
     selectedColor: true,
   },
+  hotkey: "e",
 };
 
 export const BucketTool: PaintTool = {
@@ -57,6 +61,7 @@ export const BucketTool: PaintTool = {
     palette: true,
     selectedColor: true,
   },
+  hotkey: "g",
 };
 
 export const EraserTool: PaintTool = {
@@ -68,4 +73,5 @@ export const EraserTool: PaintTool = {
     brushShape: true,
     selectedColor: true,
   },
+  hotkey: "w",
 };

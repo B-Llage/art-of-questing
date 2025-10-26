@@ -65,7 +65,7 @@ const arePixelsEqual = (a: PixelValue[], b: PixelValue[]) => {
 };
 
 export function PixelPencil() {
-  const { previewToolEffects, canvasPixelSize } = usePixelPencilSettings();
+  const { previewToolEffects, canvasPixelSize, showPixelGrid } = usePixelPencilSettings();
 
   const [pixels, setPixels] = useState<PixelValue[]>(() => makeEmptyGrid());
   const [paletteThemeId, setPaletteThemeId] = useState<
@@ -83,6 +83,7 @@ export function PixelPencil() {
   const [canRedo, setCanRedo] = useState(false);
   const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
+  const [isHotkeysDialogOpen, setIsHotkeysDialogOpen] = useState(false);
   const isDrawingRef = useRef(false);
   const drawValueRef = useRef<PixelValue>(PALETTE_THEMES[0].colors[0]);
   const lastPaintedIndexRef = useRef<number | null>(null);
@@ -269,6 +270,32 @@ export function PixelPencil() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [redo, undo]);
+
+ const handleOpenResetDialog = useCallback(() => {
+    setIsResetDialogOpen(true);
+  }, []);
+  
+  useEffect(() => {
+    const handleToolHotkeys = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (isSettingsDialogOpen || isResetDialogOpen || isHotkeysDialogOpen) return;
+      const activeElement = document.activeElement as HTMLElement | null;
+      if (activeElement && (activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA" || activeElement.isContentEditable)) {
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && key === "backspace") {
+        event.preventDefault();
+        handleOpenResetDialog();
+        return;
+      }
+      const match = TOOLS.find((item) => item.hotkey === key);
+      if (!match) return;
+      event.preventDefault();
+      setTool(match.id);
+    };
+    window.addEventListener("keydown", handleToolHotkeys);
+    return () => window.removeEventListener("keydown", handleToolHotkeys);
+  }, [handleOpenResetDialog, isHotkeysDialogOpen, isResetDialogOpen, isSettingsDialogOpen, setTool]);
 
   const computeBrushIndices = useCallback(
     (centerIndex: number) => {
@@ -872,6 +899,9 @@ export function PixelPencil() {
         const fillColor = isTransparent ? patternColor : (pixel as PaletteColor);
         const isPathPreviewCell = pathPreview?.has(index) ?? false;
         const showPathPreview = previewToolEffects && isPathPreviewCell;
+        const borderClasses = showPixelGrid
+          ? "border border-zinc-200 dark:border-zinc-700"
+          : "border border-transparent dark:border-transparent";
         const previewValue = showPathPreview ? drawValueRef.current : null;
         const previewFillColor =
           previewValue === null || previewValue === "transparent"
@@ -882,7 +912,7 @@ export function PixelPencil() {
           <button
             key={key}
             type="button"
-            className="relative border border-zinc-200 touch-none select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+            className={`relative ${borderClasses} touch-none select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-white dark:focus-visible:ring-offset-black`}
             style={{
               width: `${displayCellSize}px`,
               height: `${displayCellSize}px`,
@@ -920,6 +950,7 @@ export function PixelPencil() {
       previewToolEffects,
       tool,
       displayCellSize,
+      showPixelGrid,
     ],
   );
 
@@ -938,9 +969,7 @@ export function PixelPencil() {
     updateHistoryState();
   }, [recordSnapshot, setPixels, updateHistoryState]);
 
-  const handleOpenResetDialog = useCallback(() => {
-    setIsResetDialogOpen(true);
-  }, []);
+ 
 
   const handleCloseResetDialog = useCallback(() => {
     setIsResetDialogOpen(false);
@@ -950,6 +979,21 @@ export function PixelPencil() {
     setIsResetDialogOpen(false);
     reset();
   }, [reset]);
+
+  const HOTKEYS_MAP = useMemo(
+    () => [
+      { label: "Pencil", key: "Q" },
+      { label: "Eraser", key: "W" },
+      { label: "Picker", key: "E" },
+      { label: "Bucket", key: "G" },
+      { label: "Shape", key: "S" },
+      { label: "Line", key: "L" },
+      { label: "Undo", key: "Ctrl/Cmd + Z" },
+      { label: "Redo", key: "Ctrl/Cmd + Shift + Z" },
+      { label: "Clear", key: "Ctrl/Cmd + Backspace" },
+    ],
+    [],
+  );
 
   useEffect(() => {
     if (!isResetDialogOpen) return;
@@ -980,6 +1024,21 @@ export function PixelPencil() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isSettingsDialogOpen]);
+
+  const handleCloseHotkeysDialog = useCallback(() => {
+    setIsHotkeysDialogOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isHotkeysDialogOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsHotkeysDialogOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isHotkeysDialogOpen]);
 
   const downloadPng = useCallback(() => {
     const canvas = document.createElement("canvas");
@@ -1126,6 +1185,13 @@ export function PixelPencil() {
             </button>
             <button
               type="button"
+              onClick={() => setIsHotkeysDialogOpen(true)}
+              className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+            >
+              Hotkeys
+            </button>
+            <button
+              type="button"
               onClick={downloadPng}
               className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
             >
@@ -1181,6 +1247,27 @@ export function PixelPencil() {
       </div>
       {isSettingsDialogOpen && (
         <SettingsModal handleCloseSettingsDialog={handleCloseSettingsDialog} />
+      )}
+      {isHotkeysDialogOpen && (
+        <ActionRequestModal
+          title="Hotkeys"
+          handleClose={handleCloseHotkeysDialog}
+          handleConfirm={handleCloseHotkeysDialog}
+          confirmText="Close"
+          hideCancelButton
+          renderBody={() => (
+            <ul className="flex flex-col gap-2 text-sm text-zinc-700 dark:text-zinc-200">
+              {HOTKEYS_MAP.map((item) => (
+                <li key={item.label} className="flex items-center justify-between gap-4">
+                  <span className="font-medium">{item.label}</span>
+                  <span className="rounded bg-zinc-100 px-2 py-1 font-mono text-xs uppercase text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">
+                    {item.key}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        />
       )}
       {isResetDialogOpen && (
         <ActionRequestModal
