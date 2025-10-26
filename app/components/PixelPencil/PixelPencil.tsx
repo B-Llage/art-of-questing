@@ -6,9 +6,11 @@ import { PaintTool, PaletteTheme } from "./PixelPencilTypes";
 import { BucketTool, ColorPickerTool, EraserTool, PencilTool } from "./PixelPencilTools";
 import Image from 'next/image'
 import { PixelPencilPalettes } from "./PixelPencilPalettes";
+import { CANVAS_PIXEL_SIZE_OPTIONS, usePixelPencilSettings } from "./PixelPencilSettingsContext";
+import { SettingsModal } from "./Settings/SettingsModal";
+import { ActionRequestModal } from "../shared/ActionRequestModal";
 
 const GRID_SIZE = 32;
-const CANVAS_PIXEL_SIZE = 16; // render size for each cell in pixels
 const TRANSPARENT_LIGHT = "#d4d4d8";
 const TRANSPARENT_DARK = "#9ca3af";
 
@@ -48,6 +50,13 @@ const arePixelsEqual = (a: PixelValue[], b: PixelValue[]) => {
 };
 
 export function PixelPencil() {
+  const {
+    previewToolEffects,
+    setPreviewToolEffects,
+    canvasPixelSize,
+    setCanvasPixelSize,
+  } = usePixelPencilSettings();
+
   const [pixels, setPixels] = useState<PixelValue[]>(() => makeEmptyGrid());
   const [paletteThemeId, setPaletteThemeId] = useState<
     (typeof PALETTE_THEMES)[number]["id"]
@@ -58,12 +67,12 @@ export function PixelPencil() {
   const [tool, setTool] = useState<Tool>("pencil");
   const [brushSize, setBrushSize] = useState<(typeof BRUSH_SIZES)[number]>(1);
   const [brushShape, setBrushShape] = useState<BrushShape>("square");
-  const [isPreviewEnabled, setIsPreviewEnabled] = useState(true);
   const [isPaletteMenuOpen, setIsPaletteMenuOpen] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+  const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const isDrawingRef = useRef(false);
   const drawValueRef = useRef<PixelValue>(PALETTE_THEMES[0].colors[0]);
   const lastPaintedIndexRef = useRef<number | null>(null);
@@ -86,6 +95,15 @@ export function PixelPencil() {
   const paletteColors = useMemo(
     () => [...currentPalette.colors, "transparent"] as PaletteColor[],
     [currentPalette],
+  );
+
+  const canvasSizeOptions = useMemo(
+    () =>
+      CANVAS_PIXEL_SIZE_OPTIONS.map((size) => ({
+        size,
+        label: size === 13 ? "Small" : size === 16 ? "Medium" : "Large",
+      })),
+    [],
   );
 
   useEffect(() => {
@@ -463,7 +481,7 @@ export function PixelPencil() {
 
   // Render matrix once so React keys stay stable.
   const bucketPreview = useMemo(() => {
-    if (!isPreviewEnabled || hoverIndex === null || tool !== "bucket") return null;
+    if (!previewToolEffects || hoverIndex === null || tool !== "bucket") return null;
     const targetColor = pixels[hoverIndex];
     if (targetColor === undefined) return null;
 
@@ -490,18 +508,18 @@ export function PixelPencil() {
     }
 
     return region;
-  }, [hoverIndex, isPreviewEnabled, pixels, tool]);
+  }, [hoverIndex, pixels, previewToolEffects, tool]);
 
   const brushPreview = useMemo(() => {
     if (
-      !isPreviewEnabled ||
+      !previewToolEffects ||
       hoverIndex === null ||
       (tool !== "pencil" && tool !== "eraser")
     ) {
       return null;
     }
     return new Set(computeBrushIndices(hoverIndex));
-  }, [computeBrushIndices, hoverIndex, isPreviewEnabled, tool]);
+  }, [computeBrushIndices, hoverIndex, previewToolEffects, tool]);
 
   const cells = useMemo(
     () =>
@@ -519,8 +537,8 @@ export function PixelPencil() {
             type="button"
             className="relative border border-zinc-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
             style={{
-              width: `${CANVAS_PIXEL_SIZE}px`,
-              height: `${CANVAS_PIXEL_SIZE}px`,
+              width: `${canvasPixelSize}px`,
+              height: `${canvasPixelSize}px`,
               backgroundColor: fillColor,
               opacity:
                 tool === "bucket"
@@ -548,6 +566,7 @@ export function PixelPencil() {
       bucketPreview,
       brushPreview,
       tool,
+      canvasPixelSize,
     ],
   );
 
@@ -589,6 +608,25 @@ export function PixelPencil() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isResetDialogOpen]);
+
+  const handleOpenSettingsDialog = useCallback(() => {
+    setIsSettingsDialogOpen(true);
+  }, []);
+
+  const handleCloseSettingsDialog = useCallback(() => {
+    setIsSettingsDialogOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isSettingsDialogOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsSettingsDialogOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isSettingsDialogOpen]);
 
   const downloadPng = useCallback(() => {
     const canvas = document.createElement("canvas");
@@ -741,6 +779,11 @@ export function PixelPencil() {
 
   return (
     <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center gap-4 text-sm text-zinc-600 dark:text-zinc-300">
+        <span>Left click to draw or fill</span>
+        <span>Alt/Ctrl/⌘ or right click to erase</span>
+        <span>Bucket fills enclosed regions</span>
+      </div>
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
@@ -750,14 +793,14 @@ export function PixelPencil() {
                   Toolbox
                 </span>
               </div>
-              <div className="flex flex-wrap gap-3 justify-center">{toolButtons}</div>
+              <div className="flex flex-wrap gap-3">{toolButtons}</div>
             </div>
           </div>
           <div
-            className="grid self-center rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
+            className="grid self-start rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
             style={{
-              gridTemplateColumns: `repeat(${GRID_SIZE}, ${CANVAS_PIXEL_SIZE}px)`,
-              gridTemplateRows: `repeat(${GRID_SIZE}, ${CANVAS_PIXEL_SIZE}px)`,
+              gridTemplateColumns: `repeat(${GRID_SIZE}, ${canvasPixelSize}px)`,
+              gridTemplateRows: `repeat(${GRID_SIZE}, ${canvasPixelSize}px)`,
             }}
           >
             {cells}
@@ -787,6 +830,13 @@ export function PixelPencil() {
               className="rounded-full bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
             >
               Clear
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenSettingsDialog}
+              className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+            >
+              Settings
             </button>
             <button
               type="button"
@@ -908,7 +958,12 @@ export function PixelPencil() {
               </div>
             )}
             {currentTool.settings.palette && (
-              <div className="flex flex-wrap gap-3">{paletteButtons}</div>
+              <div className="flex flex-col gap-3">
+                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                  Palette
+                </span>
+                <div className="flex flex-wrap gap-3">{paletteButtons}</div>
+              </div>
             )}
             {currentTool.settings.selectedColor && (
               <div className="flex flex-col gap-3">
@@ -922,55 +977,19 @@ export function PixelPencil() {
                 />
               </div>
             )}
-            <label className="flex items-center gap-3 text-sm text-zinc-600 dark:text-zinc-300">
-              <input
-                type="checkbox"
-                checked={isPreviewEnabled}
-                onChange={(event) => setIsPreviewEnabled(event.target.checked)}
-                className="h-4 w-4 rounded border-zinc-300 text-black focus:ring-black dark:border-zinc-600 dark:text-white dark:focus:ring-white"
-              />
-              <span className="font-medium text-zinc-900 dark:text-zinc-50">
-                Preview Tool Effects
-              </span>
-            </label>
           </div>
         </aside>
       </div>
+      {isSettingsDialogOpen && (
+        <SettingsModal handleCloseSettingsDialog={handleCloseSettingsDialog} />
+      )}
       {isResetDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="reset-dialog-title"
-            className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            <h2
-              id="reset-dialog-title"
-              className="text-lg font-semibold text-zinc-900 dark:text-zinc-50"
-            >
-              Clear Pixel Art?
-            </h2>
-            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-              This will erase the entire grid. Are you sure you want to continue?
-            </p>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={handleCloseResetDialog}
-                className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmReset}
-                className="rounded-full bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:bg-white dark:text-black dark:hover:bg-zinc-200 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-              >
-                Yes, clear
-              </button>
-            </div>
-          </div>
-        </div>
+        <ActionRequestModal
+          title="Clear Pixel Art?"
+          message="This will erase the entire grid. Are you sure you want to continue?"
+          handleClose={handleCloseResetDialog}
+          handleConfirm={handleConfirmReset}
+        />
       )}
     </div>
   );
