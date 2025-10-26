@@ -26,6 +26,19 @@ export const LineTool: PaintTool = {
   },
 };
 
+export const ShapeTool: PaintTool = {
+  id: "shape",
+  label: "Shape",
+  icon: "/icons/tools/Shape.png",
+  settings: {
+    brushSize: true,
+    shapeType: true,
+    paletteTheme: true,
+    palette: true,
+    selectedColor: true,
+  },
+};
+
 export const ColorPickerTool: PaintTool = {
   id: "picker",
   label: "Picker",

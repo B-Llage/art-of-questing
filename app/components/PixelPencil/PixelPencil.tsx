@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { PaintTool, PaletteTheme } from "./PixelPencilTypes";
-import { BucketTool, ColorPickerTool, EraserTool, LineTool, PencilTool } from "./PixelPencilTools";
+import { BucketTool, ColorPickerTool, EraserTool, LineTool, PencilTool, ShapeTool } from "./PixelPencilTools";
 import Image from 'next/image'
 import { PixelPencilPalettes } from "./PixelPencilPalettes";
 import { usePixelPencilSettings } from "./PixelPencilSettingsContext";
@@ -14,6 +14,7 @@ import { SelectedColor } from "./Settings/Tool/SelectedColor";
 import { PaletteThemeSelector } from "./Settings/Tool/PaletteThemeSelector";
 import { BrushSizeSelector } from "./Settings/Tool/BrushSizeSelector";
 import { BrushShapeSelector } from "./Settings/Tool/BrushShapeSelector";
+import { ShapeSelector } from "./Settings/Tool/ShapeSelector";
 
 const GRID_SIZE = 32;
 const TRANSPARENT_LIGHT = "#d4d4d8";
@@ -24,10 +25,11 @@ export const BRUSH_SIZES = [1, 2, 3] as const;
 
 const TOOLS: readonly PaintTool[] = [
   PencilTool,
-  EraserTool,
-  ColorPickerTool,
-  BucketTool,
   LineTool,
+  ShapeTool,
+  EraserTool,
+  BucketTool,
+  ColorPickerTool,
 ] as const;
 
 const PALETTE_THEMES: readonly PaletteTheme[] = PixelPencilPalettes;
@@ -37,10 +39,17 @@ const BRUSH_SHAPES = [
   { id: "circle", label: "Circle" },
 ] as const;
 
+const SHAPE_TYPES = [
+  { id: "square", label: "Square" },
+  { id: "circle", label: "Circle" },
+  { id: "triangle", label: "Triangle" },
+] as const;
+
 export type PaletteColor = (typeof PALETTE_THEMES)[number]["colors"][number] | "transparent";
 export type PixelValue = PaletteColor | null;
 type Tool = (typeof TOOLS)[number]["id"];
 export type BrushShape = (typeof BRUSH_SHAPES)[number]["id"];
+export type ShapeKind = (typeof SHAPE_TYPES)[number]["id"];
 
 const makeEmptyGrid = (): PixelValue[] =>
   new Array(GRID_SIZE * GRID_SIZE).fill(null) as PixelValue[];
@@ -68,6 +77,7 @@ export function PixelPencil() {
   const [tool, setTool] = useState<Tool>("pencil");
   const [brushSize, setBrushSize] = useState<number>(1);
   const [brushShape, setBrushShape] = useState<BrushShape>("square");
+  const [shapeType, setShapeType] = useState<ShapeKind>("square");
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -84,8 +94,8 @@ export function PixelPencil() {
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
-  const [lineStartIndex, setLineStartIndex] = useState<number | null>(null);
-  const [linePreview, setLinePreview] = useState<Set<number> | null>(null);
+  const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
+  const [pathPreview, setPathPreview] = useState<Set<number> | null>(null);
   const [availableWidth, setAvailableWidth] = useState<number>(0);
   const currentPalette = useMemo(() => {
     const found = PALETTE_THEMES.find((theme) => theme.id === paletteThemeId);
@@ -139,9 +149,9 @@ export function PixelPencil() {
   }, []);
 
   useEffect(() => {
-    if (tool !== "line") {
-      setLineStartIndex(null);
-      setLinePreview(null);
+    if (tool !== "line" && tool !== "shape") {
+      setDragStartIndex(null);
+      setPathPreview(null);
       activePointerIdRef.current = null;
       isDrawingRef.current = false;
       lastPaintedIndexRef.current = null;
@@ -326,27 +336,26 @@ export function PixelPencil() {
   const applyLinePath = useCallback(
     (path: number[], value: PixelValue) => {
       if (!path.length) return;
-      setPixels((prev) => {
-        let changed = false;
-        const next = [...prev];
+      const current = pixelsRef.current;
+      const next = [...current];
+      let changed = false;
 
-        for (const pathIndex of path) {
-          const indices = computeBrushIndices(pathIndex);
-          for (const target of indices) {
-            if (next[target] === value) continue;
-            next[target] = value;
-            changed = true;
-          }
+      for (const pathIndex of path) {
+        const indices = computeBrushIndices(pathIndex);
+        for (const target of indices) {
+          if (next[target] === value) continue;
+          next[target] = value;
+          changed = true;
         }
+      }
 
-        if (!changed) {
-          return prev;
-        }
+      if (!changed) {
+        return;
+      }
 
-        pixelsRef.current = next;
-        actionModifiedRef.current = true;
-        return next;
-      });
+      pixelsRef.current = next;
+      actionModifiedRef.current = true;
+      setPixels(next);
     },
     [computeBrushIndices, setPixels],
   );
@@ -414,6 +423,83 @@ export function PixelPencil() {
     return result;
   }, []);
 
+  const computeShapeCells = useCallback(
+    (startIndex: number, endIndex: number, shape: ShapeKind) => {
+      const startX = startIndex % GRID_SIZE;
+      const startY = Math.floor(startIndex / GRID_SIZE);
+      const endX = endIndex % GRID_SIZE;
+      const endY = Math.floor(endIndex / GRID_SIZE);
+
+      const minX = Math.max(0, Math.min(startX, endX));
+      const maxX = Math.min(GRID_SIZE - 1, Math.max(startX, endX));
+      const minY = Math.max(0, Math.min(startY, endY));
+      const maxY = Math.min(GRID_SIZE - 1, Math.max(startY, endY));
+      const topToBottom = startY <= endY;
+
+      const width = Math.max(1, maxX - minX + 1);
+      const height = Math.max(1, maxY - minY + 1);
+
+      const cells: number[] = [];
+
+      const pushCell = (x: number, y: number) => {
+        if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return;
+        cells.push(y * GRID_SIZE + x);
+      };
+
+      if (shape === "square") {
+        for (let y = minY; y <= maxY; y += 1) {
+          for (let x = minX; x <= maxX; x += 1) {
+            pushCell(x, y);
+          }
+        }
+        return cells;
+      }
+
+      if (shape === "circle") {
+        const centerX = minX + (width - 1) / 2;
+        const centerY = minY + (height - 1) / 2;
+        const radius = Math.max(width, height) / 2;
+        for (let y = minY; y <= maxY; y += 1) {
+          for (let x = minX; x <= maxX; x += 1) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            if (dx * dx + dy * dy <= radius * radius) {
+              pushCell(x, y);
+            }
+          }
+        }
+        return cells;
+      }
+
+      const effectiveHeight = Math.max(height - 1, 1);
+      const centerX = minX + (width - 1) / 2;
+      if (topToBottom) {
+        for (let y = minY; y <= maxY; y += 1) {
+          const progress = (y - minY) / effectiveHeight;
+          const halfSpan = (width - 1) / 2 * (1 - progress);
+          const left = Math.round(centerX - halfSpan);
+          const right = Math.round(centerX + halfSpan);
+          for (let x = left; x <= right; x += 1) {
+            pushCell(x, y);
+          }
+        }
+      } else {
+        for (let y = maxY; y >= minY; y -= 1) {
+          const progress = (maxY - y) / effectiveHeight;
+          const halfSpan = (width - 1) / 2 * (1 - progress);
+          const left = Math.round(centerX - halfSpan);
+          const right = Math.round(centerX + halfSpan);
+          for (let x = left; x <= right; x += 1) {
+            pushCell(x, y);
+          }
+        }
+      }
+
+      return cells;
+    },
+    [],
+  );
+
   const continueStroke = useCallback(
     (index: number) => {
       if (!isDrawingRef.current) return;
@@ -441,8 +527,8 @@ export function PixelPencil() {
     isDrawingRef.current = false;
     lastPaintedIndexRef.current = null;
     activePointerIdRef.current = null;
-    setLineStartIndex(null);
-    setLinePreview(null);
+    setDragStartIndex(null);
+    setPathPreview(null);
     finalizeAction();
   }, [finalizeAction]);
 
@@ -491,10 +577,17 @@ export function PixelPencil() {
   }, []);
 
   useEffect(() => {
-    const handlePointerUp = () => stopStroke();
+    const handlePointerUp = () => {
+      if (tool === "line" || tool === "shape") {
+        if (dragStartIndex !== null) {
+          return;
+        }
+      }
+      stopStroke();
+    };
     window.addEventListener("pointerup", handlePointerUp);
     return () => window.removeEventListener("pointerup", handlePointerUp);
-  }, [stopStroke]);
+  }, [dragStartIndex, stopStroke, tool]);
 
   const resolveIndexFromPointerEvent = useCallback(
     (event: ReactPointerEvent<Element>) => {
@@ -544,7 +637,7 @@ export function PixelPencil() {
       const strokeColor =
         tool === "eraser" ? null : isErase ? null : activeColor;
 
-      if (tool === "line") {
+      if (tool === "line" || tool === "shape") {
         try {
           event.currentTarget.setPointerCapture(event.pointerId);
           activePointerIdRef.current = event.pointerId;
@@ -554,14 +647,24 @@ export function PixelPencil() {
         isDrawingRef.current = true;
         drawValueRef.current = strokeColor;
         lastPaintedIndexRef.current = null;
-        setLineStartIndex(index);
+        setDragStartIndex(index);
         if (previewToolEffects) {
-          const initialPath = computeLineIndices(index, index);
-          setLinePreview(buildLinePreview(initialPath));
+          const initialPath =
+            tool === "line"
+              ? computeLineIndices(index, index)
+              : computeShapeCells(index, index, shapeType);
+          setPathPreview(buildLinePreview(initialPath));
         } else {
-          setLinePreview(null);
+          setPathPreview(null);
         }
         return;
+      }
+
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        activePointerIdRef.current = event.pointerId;
+      } catch {
+        activePointerIdRef.current = event.pointerId;
       }
 
       startStroke(index, strokeColor);
@@ -571,8 +674,10 @@ export function PixelPencil() {
       beginAction,
       buildLinePreview,
       computeLineIndices,
+      computeShapeCells,
       floodFill,
       previewToolEffects,
+      shapeType,
       startStroke,
       tool,
     ],
@@ -583,17 +688,29 @@ export function PixelPencil() {
       setHoverIndex(index);
       if (!isDrawingRef.current) return;
       event.preventDefault();
-      if (tool === "line") {
-        if (lineStartIndex === null) return;
+      if (tool === "line" || tool === "shape") {
+        if (dragStartIndex === null) return;
         if (previewToolEffects) {
-          const path = computeLineIndices(lineStartIndex, index);
-          setLinePreview(buildLinePreview(path));
+          const path =
+            tool === "line"
+              ? computeLineIndices(dragStartIndex, index)
+              : computeShapeCells(dragStartIndex, index, shapeType);
+          setPathPreview(buildLinePreview(path));
         }
         return;
       }
       continueStroke(index);
     },
-    [buildLinePreview, computeLineIndices, continueStroke, lineStartIndex, previewToolEffects, tool],
+    [
+      buildLinePreview,
+      computeLineIndices,
+      computeShapeCells,
+      continueStroke,
+      dragStartIndex,
+      previewToolEffects,
+      shapeType,
+      tool,
+    ],
   );
 
   const handlePointerMove = useCallback(
@@ -605,46 +722,88 @@ export function PixelPencil() {
       ) {
         return;
       }
-      if (tool === "line") {
-        if (lineStartIndex === null) return;
+      if (tool === "line" || tool === "shape") {
+        if (dragStartIndex === null) return;
         const index = resolveIndexFromPointerEvent(event);
         if (index === null) return;
         event.preventDefault();
         setHoverIndex(index);
         if (previewToolEffects) {
-          const path = computeLineIndices(lineStartIndex, index);
-          setLinePreview(buildLinePreview(path));
+          const path =
+            tool === "line"
+              ? computeLineIndices(dragStartIndex, index)
+              : computeShapeCells(dragStartIndex, index, shapeType);
+          setPathPreview(buildLinePreview(path));
         }
         return;
       }
+
+      const index = resolveIndexFromPointerEvent(event);
+      if (index === null) return;
+      event.preventDefault();
+      setHoverIndex(index);
+      continueStroke(index);
     },
-    [buildLinePreview, computeLineIndices, lineStartIndex, previewToolEffects, resolveIndexFromPointerEvent, tool],
+    [
+      buildLinePreview,
+      computeLineIndices,
+      computeShapeCells,
+      dragStartIndex,
+      continueStroke,
+      previewToolEffects,
+      resolveIndexFromPointerEvent,
+      shapeType,
+      tool,
+    ],
   );
 
   const handlePointerUp = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
-      if (typeof event.currentTarget.hasPointerCapture === "function" && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      const wasDragAction = tool === "line" || tool === "shape";
+      const capturedPointer = activePointerIdRef.current;
+      const releasePointer = typeof event.currentTarget.hasPointerCapture === "function" && event.currentTarget.hasPointerCapture(event.pointerId);
+      const finalize = () => {
+        stopStroke();
+        setHoverIndex(null);
+      };
+
+      if (wasDragAction) {
+        const eventIndex = resolveIndexFromPointerEvent(event);
+        const endIndex = eventIndex ?? hoverIndex ?? dragStartIndex;
+        if (dragStartIndex !== null && endIndex !== null) {
+          const path = tool === "line"
+            ? computeLineIndices(dragStartIndex, endIndex)
+            : computeShapeCells(dragStartIndex, endIndex, shapeType);
+          const before = pixelsRef.current.slice();
+          applyLinePath(path, drawValueRef.current);
+          const after = pixelsRef.current;
+          if (!arePixelsEqual(before, after)) {
+            actionModifiedRef.current = true;
+          }
+        }
+        setDragStartIndex(null);
+        setPathPreview(null);
+        if (releasePointer && event.pointerId === capturedPointer) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        finalize();
+        return;
+      }
+
+      if (releasePointer && event.pointerId === capturedPointer) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
-      if (tool === "line" && lineStartIndex !== null) {
-        const eventIndex = resolveIndexFromPointerEvent(event);
-        const endIndex =
-          eventIndex ?? hoverIndex ?? lineStartIndex;
-        const path = computeLineIndices(lineStartIndex, endIndex);
-        applyLinePath(path, drawValueRef.current);
-        setLineStartIndex(null);
-        setLinePreview(null);
-      }
-      stopStroke();
-      setHoverIndex(null);
+      finalize();
     },
     [
       applyLinePath,
       computeLineIndices,
+      computeShapeCells,
       hoverIndex,
-      lineStartIndex,
+      dragStartIndex,
       resolveIndexFromPointerEvent,
+      shapeType,
       stopStroke,
       tool,
     ],
@@ -653,8 +812,8 @@ export function PixelPencil() {
   const handlePointerLeave = useCallback(() => {
     if (!isDrawingRef.current) {
       setHoverIndex(null);
-      if (tool === "line") {
-        setLinePreview(null);
+      if (tool === "line" || tool === "shape") {
+        setPathPreview(null);
       }
     }
   }, [tool]);
@@ -711,14 +870,14 @@ export function PixelPencil() {
         const patternColor =
           (x + y) % 2 === 0 ? TRANSPARENT_LIGHT : TRANSPARENT_DARK;
         const fillColor = isTransparent ? patternColor : (pixel as PaletteColor);
-        const isLinePreviewCell = linePreview?.has(index) ?? false;
-        const showLinePreview = previewToolEffects && isLinePreviewCell;
-        const previewValue = showLinePreview ? drawValueRef.current : null;
+        const isPathPreviewCell = pathPreview?.has(index) ?? false;
+        const showPathPreview = previewToolEffects && isPathPreviewCell;
+        const previewValue = showPathPreview ? drawValueRef.current : null;
         const previewFillColor =
           previewValue === null || previewValue === "transparent"
             ? patternColor
             : (previewValue as PaletteColor);
-        const cellBackgroundColor = showLinePreview ? previewFillColor : fillColor;
+        const cellBackgroundColor = showPathPreview ? previewFillColor : fillColor;
         return (
           <button
             key={key}
@@ -733,7 +892,7 @@ export function PixelPencil() {
                   ? bucketPreview?.has(index)
                     ? 0.7
                     : 1
-                  : showLinePreview
+                  : showPathPreview
                     ? 0.7
                     : brushPreview?.has(index)
                       ? 0.7
@@ -757,7 +916,7 @@ export function PixelPencil() {
       pixels,
       bucketPreview,
       brushPreview,
-      linePreview,
+      pathPreview,
       previewToolEffects,
       tool,
       displayCellSize,
@@ -993,6 +1152,13 @@ export function PixelPencil() {
                 options={BRUSH_SHAPES}
                 value={brushShape}
                 onChange={setBrushShape}
+              />
+            )}
+            {currentTool.settings.shapeType && (
+              <ShapeSelector
+                options={SHAPE_TYPES}
+                value={shapeType}
+                onChange={setShapeType}
               />
             )}
             {currentTool.settings.paletteTheme && (

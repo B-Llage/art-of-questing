@@ -8,6 +8,7 @@ export interface PaintTool {
     paletteTheme?: boolean;
     palette?: boolean;
     selectedColor?: boolean;
+    shapeType?: boolean;
   };
 }
 
