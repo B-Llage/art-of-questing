@@ -2,28 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { PaintTool, PaletteTheme } from "./PixelPencilTypes";
+import { PaintTool, PaletteTheme, BrushShape, PaletteColor, PixelValue, ShapeKind } from "./PixelPencilTypes";
 import { BucketTool, ColorPickerTool, EraserTool, LineTool, MagnifierTool, PencilTool, ShapeTool } from "./PixelPencilTools";
-import Image from 'next/image'
 import { PixelPencilPalettes } from "./PixelPencilPalettes";
 import { CANVAS_PIXEL_SIZE_OPTIONS, usePixelPencilSettings } from "./PixelPencilSettingsContext";
-import { SettingsModal } from "./Settings/SettingsModal";
-import { ActionRequestModal } from "../shared/ActionRequestModal";
-import { ColorPalette } from "./Settings/Tool/ColorPalette";
-import { SelectedColor } from "./Settings/Tool/SelectedColor";
-import { PaletteThemeSelector } from "./Settings/Tool/PaletteThemeSelector";
-import { BrushSizeSelector } from "./Settings/Tool/BrushSizeSelector";
-import { BrushShapeSelector } from "./Settings/Tool/BrushShapeSelector";
-import { ShapeSelector } from "./Settings/Tool/ShapeSelector";
-import { ZoomModeSelector } from "./Settings/Tool/ZoomModeSelector";
-
-const TRANSPARENT_LIGHT = "#d4d4d8";
-const TRANSPARENT_DARK = "#9ca3af";
-
-const MAX_HISTORY = 15;
-export const BRUSH_SIZES = [1, 2, 3] as const;
-const EXPORT_SCALES = [1, 2, 3] as const;
-const MAX_ZOOM_SCALE = 5;
+import { MAX_HISTORY } from "./PixelPencil.constants";
+import { usePixelExport } from "./hooks/usePixelExport";
+import { useZoomControls } from "./hooks/useZoomControls";
+import { Toolbox } from "./Toolbox";
+import { ToolSettingsPanel } from "./ToolSettingsPanel";
+import { PixelGrid } from "./PixelGrid";
+import { PixelPencilModals } from "./PixelPencilModals";
 
 const TOOLS: readonly PaintTool[] = [
   PencilTool,
@@ -36,23 +25,7 @@ const TOOLS: readonly PaintTool[] = [
 ] as const;
 
 const PALETTE_THEMES: readonly PaletteTheme[] = PixelPencilPalettes;
-
-const BRUSH_SHAPES = [
-  { id: "square", label: "Square" },
-  { id: "circle", label: "Circle" },
-] as const;
-
-const SHAPE_TYPES = [
-  { id: "square", label: "Square" },
-  { id: "circle", label: "Circle" },
-  { id: "triangle", label: "Triangle" },
-] as const;
-
-export type PaletteColor = (typeof PALETTE_THEMES)[number]["colors"][number] | "transparent";
-export type PixelValue = PaletteColor | null;
 type Tool = (typeof TOOLS)[number]["id"];
-export type BrushShape = (typeof BRUSH_SHAPES)[number]["id"];
-export type ShapeKind = (typeof SHAPE_TYPES)[number]["id"];
 
 const arePixelsEqual = (a: PixelValue[], b: PixelValue[]) => {
   if (a.length !== b.length) return false;
@@ -95,12 +68,7 @@ export function PixelPencil() {
   const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [isHotkeysDialogOpen, setIsHotkeysDialogOpen] = useState(false);
-  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
-  const [exportScale, setExportScale] = useState<(typeof EXPORT_SCALES)[number]>(1);
-  const [exportFilename, setExportFilename] = useState("pixel-art");
-  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
-  const [zoomScale, setZoomScale] = useState(1);
-  const [zoomMode, setZoomMode] = useState<"in" | "out">("in");
+  const { zoomScale, zoomMode, setZoomMode, applyZoom } = useZoomControls();
   const isDrawingRef = useRef(false);
   const drawValueRef = useRef<PixelValue>(PALETTE_THEMES[0].colors[0]);
   const lastPaintedIndexRef = useRef<number | null>(null);
@@ -148,6 +116,23 @@ export function PixelPencil() {
     (x: number, y: number) => x >= 0 && x < gridWidth && y >= 0 && y < gridHeight,
     [gridHeight, gridWidth],
   );
+
+  const {
+    isOpen: isSaveDialogOpen,
+    open: handleOpenSaveDialog,
+    close: handleCloseSaveDialog,
+    confirmSave: handleConfirmSave,
+    exportScale,
+    setExportScale: setExportScaleState,
+    exportFilename,
+    setExportFilename: setExportFilenameState,
+    previewDataUrl,
+  } = usePixelExport({
+    gridWidth,
+    gridHeight,
+    pixels,
+    indexToCoords,
+  });
 
   const baseCellSize = useMemo(() => {
     if (!availableWidth) {
@@ -730,15 +715,6 @@ export function PixelPencil() {
     }
   }, [coordsToIndex, indexToCoords, isInBounds]);
 
-  const applyZoom = useCallback((direction: "in" | "out") => {
-    setZoomScale((previous) => {
-      if (direction === "in") {
-        return Math.min(MAX_ZOOM_SCALE, previous + 1);
-      }
-      return Math.max(1, previous - 1);
-    });
-  }, []);
-
   useEffect(() => {
     const handlePointerUp = () => {
       if (tool === "line" || tool === "shape") {
@@ -1041,73 +1017,6 @@ export function PixelPencil() {
     return new Set(computeBrushIndices(hoverIndex));
   }, [computeBrushIndices, hoverIndex, previewToolEffects, tool]);
 
-  const cells = useMemo(
-    () =>
-      pixels.map((pixel, index) => {
-        const { x, y } = indexToCoords(index);
-        const key = `${x}-${y}`;
-        const isTransparent = pixel === null || pixel === "transparent";
-        const patternColor =
-          (x + y) % 2 === 0 ? TRANSPARENT_LIGHT : TRANSPARENT_DARK;
-        const fillColor = isTransparent ? patternColor : (pixel as PaletteColor);
-        const isPathPreviewCell = pathPreview?.has(index) ?? false;
-        const showPathPreview = previewToolEffects && isPathPreviewCell;
-        const borderClasses = showPixelGrid
-          ? "border border-zinc-200 dark:border-zinc-700"
-          : "border border-transparent dark:border-transparent";
-        const previewValue = showPathPreview ? drawValueRef.current : null;
-        const previewFillColor =
-          previewValue === null || previewValue === "transparent"
-            ? patternColor
-            : (previewValue as PaletteColor);
-        const cellBackgroundColor = showPathPreview ? previewFillColor : fillColor;
-        return (
-          <button
-            key={key}
-            type="button"
-            className={`relative ${borderClasses} touch-none select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-white dark:focus-visible:ring-offset-black`}
-            style={{
-              width: `${displayCellSize}px`,
-              height: `${displayCellSize}px`,
-              backgroundColor: cellBackgroundColor,
-              opacity:
-                tool === "bucket"
-                  ? bucketPreview?.has(index)
-                    ? 0.7
-                    : 1
-                  : showPathPreview
-                    ? 0.7
-                    : brushPreview?.has(index)
-                      ? 0.7
-                      : 1,
-            }}
-            onContextMenu={(event) => event.preventDefault()}
-            onPointerDown={(event) => handlePointerDown(event, index)}
-            onPointerEnter={(event) => handlePointerEnter(event, index)}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerLeave={handlePointerLeave}
-          />
-        );
-      }),
-    [
-      handlePointerDown,
-      handlePointerEnter,
-      handlePointerMove,
-      handlePointerLeave,
-      handlePointerUp,
-      pixels,
-      bucketPreview,
-      brushPreview,
-      pathPreview,
-      previewToolEffects,
-      tool,
-      displayCellSize,
-      showPixelGrid,
-      indexToCoords,
-    ],
-  );
-
   const reset = useCallback(() => {
     const current = pixelsRef.current;
     const isAlreadyEmpty = current.every((value) => value === null);
@@ -1199,113 +1108,12 @@ export function PixelPencil() {
     if (!isSaveDialogOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setIsSaveDialogOpen(false);
+        handleCloseSaveDialog();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isSaveDialogOpen]);
-
-  const createExportCanvas = useCallback(
-    (scale: number) => {
-      const canvas = document.createElement("canvas");
-      canvas.width = gridWidth * scale;
-      canvas.height = gridHeight * scale;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        return null;
-      }
-
-      ctx.imageSmoothingEnabled = false;
-
-      for (let index = 0; index < pixels.length; index += 1) {
-        const color = pixels[index];
-        if (color === null || color === "transparent") {
-          continue;
-        }
-        const { x, y } = indexToCoords(index);
-        const drawX = x * scale;
-        const drawY = y * scale;
-        ctx.fillStyle = color;
-        ctx.fillRect(drawX, drawY, scale, scale);
-      }
-
-      return canvas;
-    },
-    [gridHeight, gridWidth, indexToCoords, pixels],
-  );
-
-  const handleOpenSaveDialog = useCallback(() => {
-    setPreviewDataUrl(null);
-    setIsSaveDialogOpen(true);
-  }, []);
-
-  const handleCloseSaveDialog = useCallback(() => {
-    setIsSaveDialogOpen(false);
-  }, []);
-
-  const handleConfirmSave = useCallback(() => {
-    const canvas = createExportCanvas(exportScale);
-    if (!canvas) {
-      return;
-    }
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const trimmed = exportFilename.trim() || "pixel-art";
-      const finalName = trimmed.toLowerCase().endsWith(".png") ? trimmed : `${trimmed}.png`;
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = finalName;
-      link.click();
-      URL.revokeObjectURL(url);
-    }, "image/png");
-    setIsSaveDialogOpen(false);
-  }, [createExportCanvas, exportFilename, exportScale]);
-
-  useEffect(() => {
-    if (!isSaveDialogOpen) {
-      setPreviewDataUrl(null);
-      return;
-    }
-    const canvas = createExportCanvas(exportScale);
-    if (!canvas) {
-      setPreviewDataUrl(null);
-      return;
-    }
-    const dataUrl = canvas.toDataURL("image/png");
-    setPreviewDataUrl(dataUrl);
-  }, [createExportCanvas, exportScale, isSaveDialogOpen]);
-
-  const toolButtons = useMemo(
-    () =>
-      TOOLS.map((option) => {
-        const isSelected = option.id === tool;
-        return (
-          <button
-            key={option.id}
-            type="button"
-            className={`flex items-center justify-center rounded-full border border-zinc-300 p-3 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${isSelected
-              ? "bg-black text-white dark:bg-white dark:text-black"
-              : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              }`}
-            onClick={() => setTool(option.id)}
-            aria-label={option.label}
-            title={option.label}
-          >
-            <Image
-              src={option.icon}
-              width={32}
-              height={32}
-              alt={`${option.label} icon`}
-              unoptimized
-              style={{ imageRendering: "pixelated" }}
-            />
-          </button>
-        );
-      }),
-    [tool],
-  );
 
   const selectedColorStyles = useMemo(() => {
     const isTransparent = activeColor === "transparent";
@@ -1335,30 +1143,31 @@ export function PixelPencil() {
                   Toolbox
                 </span>
               </div>
-              <div className="flex flex-wrap justify-center gap-3">{toolButtons}</div>
+              <Toolbox tools={TOOLS} selectedToolId={tool} onSelect={setTool} />
             </div>
           </div>
-          <div
-            ref={gridWrapperRef}
-            className={`w-full touch-none max-h-[70vh] ${
-              zoomScale > 1
-                ? "overflow-auto"
-                : "flex justify-center overflow-hidden"
-            }`}
-          >
-            <div
-              ref={gridRef}
-              className={`grid rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 ${
-                zoomScale > 1 ? "min-w-max" : "mx-auto max-w-full"
-              }`}
-              style={{
-                gridTemplateColumns: `repeat(${gridWidth}, ${displayCellSize}px)`,
-                gridTemplateRows: `repeat(${gridHeight}, ${displayCellSize}px)`,
-                }}
-            >
-              {cells}
-            </div>
-          </div>
+          <PixelGrid
+            gridWidth={gridWidth}
+            gridHeight={gridHeight}
+            displayCellSize={displayCellSize}
+            zoomScale={zoomScale}
+            gridWrapperRef={gridWrapperRef}
+            gridRef={gridRef}
+            pixels={pixels}
+            indexToCoords={indexToCoords}
+            showPixelGrid={showPixelGrid}
+            previewToolEffects={previewToolEffects}
+            bucketPreview={bucketPreview}
+            brushPreview={brushPreview}
+            pathPreview={pathPreview}
+            drawValueRef={drawValueRef}
+            tool={tool}
+            handlePointerDown={handlePointerDown}
+            handlePointerEnter={handlePointerEnter}
+            handlePointerMove={handlePointerMove}
+            handlePointerUp={handlePointerUp}
+            handlePointerLeave={handlePointerLeave}
+          />
           <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               type="button"
@@ -1409,170 +1218,48 @@ export function PixelPencil() {
           </div>
         </div>
         <aside className="w-full flex-shrink-0 lg:max-w-xs xl:max-w-sm">
-          <div className="flex flex-col gap-5 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-              Tool Settings
-            </span>
-
-            {currentTool.settings.brushSize && (
-              <BrushSizeSelector
-                options={BRUSH_SIZES}
-                value={brushSize}
-                onChange={setBrushSize}
-              />
-            )}
-
-            {currentTool.settings.brushShape && (
-              <BrushShapeSelector
-                options={BRUSH_SHAPES}
-                value={brushShape}
-                onChange={setBrushShape}
-              />
-            )}
-            {currentTool.settings.shapeType && (
-              <ShapeSelector
-                options={SHAPE_TYPES}
-                value={shapeType}
-                onChange={setShapeType}
-              />
-            )}
-            {currentTool.settings.shapeFilled && (
-              <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-                <span className="font-medium">Filled Shape</span>
-                <input
-                  type="checkbox"
-                  checked={shapeFilled}
-                  onChange={(event) => setShapeFilled(event.target.checked)}
-                  className="h-4 w-4 rounded border-zinc-300 text-black focus:ring-black dark:border-zinc-600 dark:text-white dark:focus:ring-white"
-                />
-              </label>
-            )}
-            {currentTool.settings.zoomMode && (
-              <ZoomModeSelector value={zoomMode} onChange={setZoomMode} />
-            )}
-            {currentTool.settings.paletteTheme && (
-              <PaletteThemeSelector
-                paletteThemeId={paletteThemeId}
-                currentPalette={currentPalette}
-                drawValueRef={drawValueRef} 
-                setPaletteThemeId={setPaletteThemeId}
-                setActiveColor={setActiveColor}
-                />
-            )}
-            {currentTool.settings.palette && (
-              <ColorPalette paletteColors={paletteColors} setActiveColor={setActiveColor} drawValueRef={drawValueRef} />
-            )}
-            {currentTool.settings.selectedColor && (
-              <SelectedColor selectedColorStyles={selectedColorStyles} />
-            )}
-          </div>
+          <ToolSettingsPanel
+            currentTool={currentTool}
+            brushSize={brushSize}
+            onBrushSizeChange={setBrushSize}
+            brushShape={brushShape}
+            onBrushShapeChange={setBrushShape}
+            shapeType={shapeType}
+            onShapeTypeChange={setShapeType}
+            shapeFilled={shapeFilled}
+            onShapeFilledChange={setShapeFilled}
+            zoomMode={zoomMode}
+            onZoomModeChange={setZoomMode}
+            paletteThemeId={paletteThemeId}
+            setPaletteThemeId={setPaletteThemeId}
+            currentPalette={currentPalette}
+            drawValueRef={drawValueRef}
+            setActiveColor={setActiveColor}
+            paletteColors={paletteColors}
+            selectedColorStyles={selectedColorStyles}
+          />
         </aside>
       </div>
-      {isSaveDialogOpen && (
-        <ActionRequestModal
-          title="Save PNG"
-          handleClose={handleCloseSaveDialog}
-          handleConfirm={handleConfirmSave}
-          confirmText="Save"
-          cancelText="Cancel"
-          renderBody={() => (
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                  Preview
-                </span>
-                <div className="flex items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50">
-                  {previewDataUrl ? (
-                    <img
-                      src={previewDataUrl}
-                      alt="PNG preview"
-                      width={gridWidth * exportScale}
-                      height={gridHeight * exportScale}
-                      style={{ imageRendering: "pixelated" }}
-                      className="rounded border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900"
-                    />
-                  ) : (
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                      Generating preview…
-                    </span>
-                  )}
-                </div>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                  {gridWidth * exportScale} × {gridHeight * exportScale} px
-                </span>
-              </div>
-              <div className="flex flex-col gap-2">
-                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                  Export size
-                </span>
-                <div className="flex gap-2">
-                  {EXPORT_SCALES.map((scale) => {
-                    const isSelected = exportScale === scale;
-                    return (
-                      <button
-                        key={`export-scale-${scale}`}
-                        type="button"
-                        onClick={() => setExportScale(scale)}
-                        className={`flex-1 rounded-full border border-zinc-300 px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
-                          isSelected
-                            ? "bg-black text-white dark:bg-white dark:text-black"
-                            : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                        }`}
-                      >
-                        {scale}X
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <label className="flex flex-col gap-2 text-sm text-zinc-700 dark:text-zinc-200">
-                <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                  File name
-                </span>
-                <input
-                  type="text"
-                  value={exportFilename}
-                  onChange={(event) => setExportFilename(event.target.value)}
-                  placeholder="pixel-art"
-                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-                />
-              </label>
-            </div>
-          )}
-        />
-      )}
-      {isSettingsDialogOpen && (
-        <SettingsModal handleCloseSettingsDialog={handleCloseSettingsDialog} />
-      )}
-      {isHotkeysDialogOpen && (
-        <ActionRequestModal
-          title="Hotkeys"
-          handleClose={handleCloseHotkeysDialog}
-          handleConfirm={handleCloseHotkeysDialog}
-          confirmText="Close"
-          hideCancelButton
-          renderBody={() => (
-            <ul className="flex flex-col gap-2 text-sm text-zinc-700 dark:text-zinc-200">
-              {HOTKEYS_MAP.map((item) => (
-                <li key={item.label} className="flex items-center justify-between gap-4">
-                  <span className="font-medium">{item.label}</span>
-                  <span className="rounded bg-zinc-100 px-2 py-1 font-mono text-xs uppercase text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">
-                    {item.key}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        />
-      )}
-      {isResetDialogOpen && (
-        <ActionRequestModal
-          title="Clear Pixel Art?"
-          message="This will erase the entire grid. Are you sure you want to continue?"
-          handleClose={handleCloseResetDialog}
-          handleConfirm={handleConfirmReset}
-        />
-      )}
+      <PixelPencilModals
+        isSaveDialogOpen={isSaveDialogOpen}
+        handleCloseSaveDialog={handleCloseSaveDialog}
+        handleConfirmSave={handleConfirmSave}
+        exportScale={exportScale}
+        setExportScale={setExportScaleState}
+        exportFilename={exportFilename}
+        setExportFilename={setExportFilenameState}
+        previewDataUrl={previewDataUrl}
+        gridWidth={gridWidth}
+        gridHeight={gridHeight}
+        isSettingsDialogOpen={isSettingsDialogOpen}
+        handleCloseSettingsDialog={handleCloseSettingsDialog}
+        isHotkeysDialogOpen={isHotkeysDialogOpen}
+        handleCloseHotkeysDialog={handleCloseHotkeysDialog}
+        hotkeys={HOTKEYS_MAP}
+        isResetDialogOpen={isResetDialogOpen}
+        handleCloseResetDialog={handleCloseResetDialog}
+        handleConfirmReset={handleConfirmReset}
+      />
     </div>
   );
 }

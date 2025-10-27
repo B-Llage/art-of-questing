@@ -1,3 +1,5 @@
+import { BRUSH_SHAPES, SHAPE_TYPES } from "./PixelPencil.constants";
+
 export interface PaintTool {
   id: string;
   label: string;
@@ -20,3 +22,9 @@ export interface PaletteTheme {
   name: string;
   colors: readonly string[];
 }
+
+export type PaletteColor = string | "transparent";
+export type PixelValue = PaletteColor | null;
+
+export type BrushShape = (typeof BRUSH_SHAPES)[number]["id"];
+export type ShapeKind = (typeof SHAPE_TYPES)[number]["id"];
