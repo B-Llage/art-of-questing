@@ -10,6 +10,7 @@ export interface PaintTool {
     palette?: boolean;
     selectedColor?: boolean;
     shapeType?: boolean;
+    shapeFilled?: boolean;
   };
 }
 

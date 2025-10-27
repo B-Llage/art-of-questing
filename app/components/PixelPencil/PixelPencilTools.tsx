@@ -35,6 +35,7 @@ export const ShapeTool: PaintTool = {
   settings: {
     brushSize: true,
     shapeType: true,
+    shapeFilled: true,
     paletteTheme: true,
     palette: true,
     selectedColor: true,

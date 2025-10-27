@@ -78,6 +78,7 @@ export function PixelPencil() {
   const [brushSize, setBrushSize] = useState<number>(1);
   const [brushShape, setBrushShape] = useState<BrushShape>("square");
   const [shapeType, setShapeType] = useState<ShapeKind>("square");
+  const [shapeFilled, setShapeFilled] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -271,7 +272,7 @@ export function PixelPencil() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [redo, undo]);
 
- const handleOpenResetDialog = useCallback(() => {
+  const handleOpenResetDialog = useCallback(() => {
     setIsResetDialogOpen(true);
   }, []);
   
@@ -451,7 +452,7 @@ export function PixelPencil() {
   }, []);
 
   const computeShapeCells = useCallback(
-    (startIndex: number, endIndex: number, shape: ShapeKind) => {
+    (startIndex: number, endIndex: number, shape: ShapeKind, filled: boolean) => {
       const startX = startIndex % GRID_SIZE;
       const startY = Math.floor(startIndex / GRID_SIZE);
       const endX = endIndex % GRID_SIZE;
@@ -473,16 +474,15 @@ export function PixelPencil() {
         cells.push(y * GRID_SIZE + x);
       };
 
-      if (shape === "square") {
+      const addSquare = () => {
         for (let y = minY; y <= maxY; y += 1) {
           for (let x = minX; x <= maxX; x += 1) {
             pushCell(x, y);
           }
         }
-        return cells;
-      }
+      };
 
-      if (shape === "circle") {
+      const addCircle = () => {
         const centerX = minX + (width - 1) / 2;
         const centerY = minY + (height - 1) / 2;
         const radius = Math.max(width, height) / 2;
@@ -495,34 +495,73 @@ export function PixelPencil() {
             }
           }
         }
+      };
+
+      const addTriangle = () => {
+        const effectiveHeight = Math.max(height - 1, 1);
+        const centerX = minX + (width - 1) / 2;
+        if (topToBottom) {
+          for (let y = minY; y <= maxY; y += 1) {
+            const progress = (y - minY) / effectiveHeight;
+            const halfSpan = (width - 1) / 2 * (1 - progress);
+            const left = Math.round(centerX - halfSpan);
+            const right = Math.round(centerX + halfSpan);
+            for (let x = left; x <= right; x += 1) {
+              pushCell(x, y);
+            }
+          }
+        } else {
+          for (let y = maxY; y >= minY; y -= 1) {
+            const progress = (maxY - y) / effectiveHeight;
+            const halfSpan = (width - 1) / 2 * (1 - progress);
+            const left = Math.round(centerX - halfSpan);
+            const right = Math.round(centerX + halfSpan);
+            for (let x = left; x <= right; x += 1) {
+              pushCell(x, y);
+            }
+          }
+        }
+      };
+
+      if (shape === "square") {
+        addSquare();
+      } else if (shape === "circle") {
+        addCircle();
+      } else {
+        addTriangle();
+      }
+
+      if (filled) {
         return cells;
       }
 
-      const effectiveHeight = Math.max(height - 1, 1);
-      const centerX = minX + (width - 1) / 2;
-      if (topToBottom) {
-        for (let y = minY; y <= maxY; y += 1) {
-          const progress = (y - minY) / effectiveHeight;
-          const halfSpan = (width - 1) / 2 * (1 - progress);
-          const left = Math.round(centerX - halfSpan);
-          const right = Math.round(centerX + halfSpan);
-          for (let x = left; x <= right; x += 1) {
-            pushCell(x, y);
+      const perimeter = new Set<number>();
+      const cellSet = new Set(cells);
+      const neighbors = [1, -1, GRID_SIZE, -GRID_SIZE];
+      for (const cell of cells) {
+        const x = cell % GRID_SIZE;
+        const y = Math.floor(cell / GRID_SIZE);
+        for (const delta of neighbors) {
+          const neighbor = cell + delta;
+          if (
+            neighbor < 0 ||
+            neighbor >= GRID_SIZE * GRID_SIZE ||
+            (delta === 1 && x === GRID_SIZE - 1) ||
+            (delta === -1 && x === 0) ||
+            (delta === GRID_SIZE && y === GRID_SIZE - 1) ||
+            (delta === -GRID_SIZE && y === 0)
+          ) {
+            perimeter.add(cell);
+            break;
           }
-        }
-      } else {
-        for (let y = maxY; y >= minY; y -= 1) {
-          const progress = (maxY - y) / effectiveHeight;
-          const halfSpan = (width - 1) / 2 * (1 - progress);
-          const left = Math.round(centerX - halfSpan);
-          const right = Math.round(centerX + halfSpan);
-          for (let x = left; x <= right; x += 1) {
-            pushCell(x, y);
+          if (!cellSet.has(neighbor)) {
+            perimeter.add(cell);
+            break;
           }
         }
       }
 
-      return cells;
+      return Array.from(perimeter);
     },
     [],
   );
@@ -679,7 +718,7 @@ export function PixelPencil() {
           const initialPath =
             tool === "line"
               ? computeLineIndices(index, index)
-              : computeShapeCells(index, index, shapeType);
+              : computeShapeCells(index, index, shapeType, shapeFilled);
           setPathPreview(buildLinePreview(initialPath));
         } else {
           setPathPreview(null);
@@ -704,6 +743,7 @@ export function PixelPencil() {
       computeShapeCells,
       floodFill,
       previewToolEffects,
+      shapeFilled,
       shapeType,
       startStroke,
       tool,
@@ -721,7 +761,7 @@ export function PixelPencil() {
           const path =
             tool === "line"
               ? computeLineIndices(dragStartIndex, index)
-              : computeShapeCells(dragStartIndex, index, shapeType);
+              : computeShapeCells(dragStartIndex, index, shapeType, shapeFilled);
           setPathPreview(buildLinePreview(path));
         }
         return;
@@ -735,6 +775,7 @@ export function PixelPencil() {
       continueStroke,
       dragStartIndex,
       previewToolEffects,
+      shapeFilled,
       shapeType,
       tool,
     ],
@@ -759,7 +800,7 @@ export function PixelPencil() {
           const path =
             tool === "line"
               ? computeLineIndices(dragStartIndex, index)
-              : computeShapeCells(dragStartIndex, index, shapeType);
+              : computeShapeCells(dragStartIndex, index, shapeType, shapeFilled);
           setPathPreview(buildLinePreview(path));
         }
         return;
@@ -779,6 +820,7 @@ export function PixelPencil() {
       continueStroke,
       previewToolEffects,
       resolveIndexFromPointerEvent,
+      shapeFilled,
       shapeType,
       tool,
     ],
@@ -801,7 +843,7 @@ export function PixelPencil() {
         if (dragStartIndex !== null && endIndex !== null) {
           const path = tool === "line"
             ? computeLineIndices(dragStartIndex, endIndex)
-            : computeShapeCells(dragStartIndex, endIndex, shapeType);
+            : computeShapeCells(dragStartIndex, endIndex, shapeType, shapeFilled);
           const before = pixelsRef.current.slice();
           applyLinePath(path, drawValueRef.current);
           const after = pixelsRef.current;
@@ -830,6 +872,7 @@ export function PixelPencil() {
       hoverIndex,
       dragStartIndex,
       resolveIndexFromPointerEvent,
+      shapeFilled,
       shapeType,
       stopStroke,
       tool,
@@ -1226,6 +1269,17 @@ export function PixelPencil() {
                 value={shapeType}
                 onChange={setShapeType}
               />
+            )}
+            {currentTool.settings.shapeFilled && (
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                <span className="font-medium">Filled Shape</span>
+                <input
+                  type="checkbox"
+                  checked={shapeFilled}
+                  onChange={(event) => setShapeFilled(event.target.checked)}
+                  className="h-4 w-4 rounded border-zinc-300 text-black focus:ring-black dark:border-zinc-600 dark:text-white dark:focus:ring-white"
+                />
+              </label>
             )}
             {currentTool.settings.paletteTheme && (
               <PaletteThemeSelector
