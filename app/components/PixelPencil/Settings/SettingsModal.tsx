@@ -1,5 +1,9 @@
 import { useMemo } from "react";
-import { usePixelPencilSettings, CANVAS_PIXEL_SIZE_OPTIONS } from "../PixelPencilSettingsContext";
+import {
+  CANVAS_PIXEL_SIZE_OPTIONS,
+  GRID_DIMENSION_OPTIONS,
+  usePixelPencilSettings,
+} from "../PixelPencilSettingsContext";
 
 
 interface SettingsModalProps {
@@ -12,18 +16,27 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
         setPreviewToolEffects,
         canvasPixelSize,
         setCanvasPixelSize,
+        gridWidth,
+        setGridWidth,
+        gridHeight,
+        setGridHeight,
         showPixelGrid,
         setShowPixelGrid,
       } = usePixelPencilSettings();
 
-        const canvasSizeOptions = useMemo(
-          () =>
-            CANVAS_PIXEL_SIZE_OPTIONS.map((size) => ({
-              size,
-              label: size === 13 ? "Small" : size === 16 ? "Medium" : "Large",
-            })),
-          [],
-        );
+        const canvasSizeOptions = useMemo(() => {
+          const labelMap: Record<(typeof CANVAS_PIXEL_SIZE_OPTIONS)[number], string> = {
+            8: "XS",
+            13: "Small",
+            16: "Medium",
+            19: "Large",
+            32: "XL",
+          };
+          return CANVAS_PIXEL_SIZE_OPTIONS.map((size) => ({
+            size,
+            label: labelMap[size],
+          }));
+        }, []);
 
     return <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
@@ -84,6 +97,54 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
                     Visible
                   </span>
                 </label>
+              </div>
+              <div className="flex flex-col gap-3">
+                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                  Grid Width
+                </span>
+                <div className="flex flex-wrap gap-3">
+                  {GRID_DIMENSION_OPTIONS.map((size) => {
+                    const isSelected = size === gridWidth;
+                    return (
+                      <button
+                        key={`grid-width-${size}`}
+                        type="button"
+                    className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
+                          isSelected
+                            ? "bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                            : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        }`}
+                        onClick={() => setGridWidth(size)}
+                      >
+                        {size}px
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex flex-col gap-3">
+                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                  Grid Height
+                </span>
+                <div className="flex flex-wrap gap-3">
+                  {GRID_DIMENSION_OPTIONS.map((size) => {
+                    const isSelected = size === gridHeight;
+                    return (
+                      <button
+                        key={`grid-height-${size}`}
+                        type="button"
+                    className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
+                          isSelected
+                            ? "bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                            : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        }`}
+                        onClick={() => setGridHeight(size)}
+                      >
+                        {size}px
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div className="flex flex-col gap-3">
                 <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">

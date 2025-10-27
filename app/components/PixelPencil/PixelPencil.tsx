@@ -6,7 +6,7 @@ import { PaintTool, PaletteTheme } from "./PixelPencilTypes";
 import { BucketTool, ColorPickerTool, EraserTool, LineTool, PencilTool, ShapeTool } from "./PixelPencilTools";
 import Image from 'next/image'
 import { PixelPencilPalettes } from "./PixelPencilPalettes";
-import { usePixelPencilSettings } from "./PixelPencilSettingsContext";
+import { CANVAS_PIXEL_SIZE_OPTIONS, usePixelPencilSettings } from "./PixelPencilSettingsContext";
 import { SettingsModal } from "./Settings/SettingsModal";
 import { ActionRequestModal } from "../shared/ActionRequestModal";
 import { ColorPalette } from "./Settings/Tool/ColorPalette";
@@ -16,7 +16,6 @@ import { BrushSizeSelector } from "./Settings/Tool/BrushSizeSelector";
 import { BrushShapeSelector } from "./Settings/Tool/BrushShapeSelector";
 import { ShapeSelector } from "./Settings/Tool/ShapeSelector";
 
-const GRID_SIZE = 32;
 const TRANSPARENT_LIGHT = "#d4d4d8";
 const TRANSPARENT_DARK = "#9ca3af";
 
@@ -51,9 +50,6 @@ type Tool = (typeof TOOLS)[number]["id"];
 export type BrushShape = (typeof BRUSH_SHAPES)[number]["id"];
 export type ShapeKind = (typeof SHAPE_TYPES)[number]["id"];
 
-const makeEmptyGrid = (): PixelValue[] =>
-  new Array(GRID_SIZE * GRID_SIZE).fill(null) as PixelValue[];
-
 const arePixelsEqual = (a: PixelValue[], b: PixelValue[]) => {
   if (a.length !== b.length) return false;
   for (let index = 0; index < a.length; index += 1) {
@@ -65,9 +61,19 @@ const arePixelsEqual = (a: PixelValue[], b: PixelValue[]) => {
 };
 
 export function PixelPencil() {
-  const { previewToolEffects, canvasPixelSize, showPixelGrid } = usePixelPencilSettings();
+  const {
+    previewToolEffects,
+    canvasPixelSize,
+    setCanvasPixelSize,
+    gridWidth,
+    gridHeight,
+    showPixelGrid,
+  } = usePixelPencilSettings();
 
-  const [pixels, setPixels] = useState<PixelValue[]>(() => makeEmptyGrid());
+  const totalCells = gridWidth * gridHeight;
+  const [pixels, setPixels] = useState<PixelValue[]>(() =>
+    new Array(totalCells).fill(null) as PixelValue[],
+  );
   const [paletteThemeId, setPaletteThemeId] = useState<
     (typeof PALETTE_THEMES)[number]["id"]
   >(PALETTE_THEMES[0].id);
@@ -99,6 +105,7 @@ export function PixelPencil() {
   const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
   const [pathPreview, setPathPreview] = useState<Set<number> | null>(null);
   const [availableWidth, setAvailableWidth] = useState<number>(0);
+  const prevDimensionsRef = useRef({ width: gridWidth, height: gridHeight });
   const currentPalette = useMemo(() => {
     const found = PALETTE_THEMES.find((theme) => theme.id === paletteThemeId);
     return found ?? PALETTE_THEMES[0];
@@ -114,23 +121,90 @@ export function PixelPencil() {
     [currentPalette],
   );
 
+  const indexToCoords = useCallback(
+    (index: number) => ({
+      x: index % gridWidth,
+      y: Math.floor(index / gridWidth),
+    }),
+    [gridWidth],
+  );
+
+  const coordsToIndex = useCallback(
+    (x: number, y: number) => y * gridWidth + x,
+    [gridWidth],
+  );
+
+  const isInBounds = useCallback(
+    (x: number, y: number) => x >= 0 && x < gridWidth && y >= 0 && y < gridHeight,
+    [gridHeight, gridWidth],
+  );
+
   const displayCellSize = useMemo(() => {
     if (!availableWidth) {
       return canvasPixelSize;
     }
     const paddingOffset = 8; // account for grid padding (p-2)
     const effectiveWidth = Math.max(0, availableWidth - paddingOffset);
-    const maxCellSize = Math.floor(effectiveWidth / GRID_SIZE);
+    const maxCellSize = Math.floor(effectiveWidth / gridWidth);
     if (!Number.isFinite(maxCellSize) || maxCellSize <= 0) {
       return canvasPixelSize;
     }
     const clamped = Math.max(4, maxCellSize);
     return Math.min(canvasPixelSize, clamped);
-  }, [availableWidth, canvasPixelSize]);
+  }, [availableWidth, canvasPixelSize, gridWidth]);
 
   useEffect(() => {
     pixelsRef.current = pixels;
-  }, [pixels]);
+  }, [gridHeight, gridWidth, indexToCoords, pixels]);
+
+  useEffect(() => {
+    const prev = prevDimensionsRef.current;
+    if (prev.width === gridWidth && prev.height === gridHeight) {
+      return;
+    }
+    setPixels((prevPixels) => {
+      const next = new Array(totalCells).fill(null) as PixelValue[];
+      const copyWidth = Math.min(prev.width, gridWidth);
+      const copyHeight = Math.min(prev.height, gridHeight);
+      for (let y = 0; y < copyHeight; y += 1) {
+        for (let x = 0; x < copyWidth; x += 1) {
+          const oldIndex = y * prev.width + x;
+          const newIndex = y * gridWidth + x;
+          next[newIndex] = prevPixels[oldIndex] ?? null;
+        }
+      }
+      pixelsRef.current = next;
+      return next;
+    });
+    prevDimensionsRef.current = { width: gridWidth, height: gridHeight };
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    actionModifiedRef.current = false;
+    actionInProgressRef.current = false;
+    setCanUndo(false);
+    setCanRedo(false);
+    setHoverIndex(null);
+  }, [gridHeight, gridWidth, setCanRedo, setCanUndo, setHoverIndex, totalCells]);
+
+  useEffect(() => {
+    const baseDimension = 32;
+    const basePixelSize = 16;
+    const largestDimension = Math.max(gridWidth, gridHeight);
+    const targetSize = Math.max(
+      4,
+      Math.round((baseDimension / largestDimension) * basePixelSize),
+    );
+    let closest = CANVAS_PIXEL_SIZE_OPTIONS[0];
+    let smallestDiff = Math.abs(closest - targetSize);
+    for (const option of CANVAS_PIXEL_SIZE_OPTIONS) {
+      const diff = Math.abs(option - targetSize);
+      if (diff < smallestDiff) {
+        closest = option;
+        smallestDiff = diff;
+      }
+    }
+    setCanvasPixelSize((prev) => (prev === closest ? prev : closest));
+  }, [gridHeight, gridWidth, setCanvasPixelSize]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !gridWrapperRef.current) {
@@ -300,8 +374,8 @@ export function PixelPencil() {
 
   const computeBrushIndices = useCallback(
     (centerIndex: number) => {
-      const centerX = centerIndex % GRID_SIZE;
-      const centerY = Math.floor(centerIndex / GRID_SIZE);
+      const centerX = centerIndex % gridWidth;
+      const centerY = Math.floor(centerIndex / gridWidth);
       const startOffset = -Math.floor((brushSize - 1) / 2);
       const endOffset = Math.ceil((brushSize - 1) / 2);
       const indices: number[] = [];
@@ -318,17 +392,17 @@ export function PixelPencil() {
           const x = centerX + dx;
           const y = centerY + dy;
 
-          if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) {
+          if (!isInBounds(x, y)) {
             continue;
           }
 
-          indices.push(y * GRID_SIZE + x);
+          indices.push(coordsToIndex(x, y));
         }
       }
 
       return indices;
     },
-    [brushShape, brushSize],
+    [brushShape, brushSize, coordsToIndex, isInBounds],
   );
 
   const applyBrush = useCallback(
@@ -412,56 +486,55 @@ export function PixelPencil() {
     [applyBrush],
   );
 
-  const computeLineIndices = useCallback((startIndex: number, endIndex: number) => {
-    if (startIndex === endIndex) {
-      return [startIndex];
-    }
-
-    const coordinatesToIndex = (x: number, y: number) => y * GRID_SIZE + x;
-    let x0 = startIndex % GRID_SIZE;
-    let y0 = Math.floor(startIndex / GRID_SIZE);
-    const x1 = endIndex % GRID_SIZE;
-    const y1 = Math.floor(endIndex / GRID_SIZE);
-
-    const result: number[] = [];
-
-    const dx = Math.abs(x1 - x0);
-    const dy = Math.abs(y1 - y0);
-    const sx = x0 < x1 ? 1 : -1;
-    const sy = y0 < y1 ? 1 : -1;
-    let err = dx - dy;
-
-    // Bresenham's line algorithm
-    while (true) {
-      result.push(coordinatesToIndex(x0, y0));
-      if (x0 === x1 && y0 === y1) {
-        break;
+  const computeLineIndices = useCallback(
+    (startIndex: number, endIndex: number) => {
+      if (startIndex === endIndex) {
+        return [startIndex];
       }
-      const e2 = 2 * err;
-      if (e2 > -dy) {
-        err -= dy;
-        x0 += sx;
-      }
-      if (e2 < dx) {
-        err += dx;
-        y0 += sy;
-      }
-    }
 
-    return result;
-  }, []);
+      let { x: x0, y: y0 } = indexToCoords(startIndex);
+      const { x: x1, y: y1 } = indexToCoords(endIndex);
+
+      const result: number[] = [];
+
+      const dx = Math.abs(x1 - x0);
+      const dy = Math.abs(y1 - y0);
+      const sx = x0 < x1 ? 1 : -1;
+      const sy = y0 < y1 ? 1 : -1;
+      let err = dx - dy;
+
+      while (true) {
+        if (isInBounds(x0, y0)) {
+          result.push(coordsToIndex(x0, y0));
+        }
+        if (x0 === x1 && y0 === y1) {
+          break;
+        }
+        const e2 = 2 * err;
+        if (e2 > -dy) {
+          err -= dy;
+          x0 += sx;
+        }
+        if (e2 < dx) {
+          err += dx;
+          y0 += sy;
+        }
+      }
+
+      return result;
+    },
+    [coordsToIndex, indexToCoords, isInBounds],
+  );
 
   const computeShapeCells = useCallback(
     (startIndex: number, endIndex: number, shape: ShapeKind, filled: boolean) => {
-      const startX = startIndex % GRID_SIZE;
-      const startY = Math.floor(startIndex / GRID_SIZE);
-      const endX = endIndex % GRID_SIZE;
-      const endY = Math.floor(endIndex / GRID_SIZE);
+      const { x: startX, y: startY } = indexToCoords(startIndex);
+      const { x: endX, y: endY } = indexToCoords(endIndex);
 
       const minX = Math.max(0, Math.min(startX, endX));
-      const maxX = Math.min(GRID_SIZE - 1, Math.max(startX, endX));
+      const maxX = Math.min(gridWidth - 1, Math.max(startX, endX));
       const minY = Math.max(0, Math.min(startY, endY));
-      const maxY = Math.min(GRID_SIZE - 1, Math.max(startY, endY));
+      const maxY = Math.min(gridHeight - 1, Math.max(startY, endY));
       const topToBottom = startY <= endY;
 
       const width = Math.max(1, maxX - minX + 1);
@@ -470,8 +543,8 @@ export function PixelPencil() {
       const cells: number[] = [];
 
       const pushCell = (x: number, y: number) => {
-        if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return;
-        cells.push(y * GRID_SIZE + x);
+        if (!isInBounds(x, y)) return;
+        cells.push(coordsToIndex(x, y));
       };
 
       const addSquare = () => {
@@ -537,24 +610,19 @@ export function PixelPencil() {
 
       const perimeter = new Set<number>();
       const cellSet = new Set(cells);
-      const neighbors = [1, -1, GRID_SIZE, -GRID_SIZE];
+      const neighborOffsets = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+      ];
+
       for (const cell of cells) {
-        const x = cell % GRID_SIZE;
-        const y = Math.floor(cell / GRID_SIZE);
-        for (const delta of neighbors) {
-          const neighbor = cell + delta;
-          if (
-            neighbor < 0 ||
-            neighbor >= GRID_SIZE * GRID_SIZE ||
-            (delta === 1 && x === GRID_SIZE - 1) ||
-            (delta === -1 && x === 0) ||
-            (delta === GRID_SIZE && y === GRID_SIZE - 1) ||
-            (delta === -GRID_SIZE && y === 0)
-          ) {
-            perimeter.add(cell);
-            break;
-          }
-          if (!cellSet.has(neighbor)) {
+        const { x, y } = indexToCoords(cell);
+        for (const { dx, dy } of neighborOffsets) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (!isInBounds(nx, ny) || !cellSet.has(coordsToIndex(nx, ny))) {
             perimeter.add(cell);
             break;
           }
@@ -563,7 +631,7 @@ export function PixelPencil() {
 
       return Array.from(perimeter);
     },
-    [],
+    [coordsToIndex, gridHeight, gridWidth, indexToCoords, isInBounds],
   );
 
   const continueStroke = useCallback(
@@ -620,13 +688,19 @@ export function PixelPencil() {
         next[index] = fillValue;
         changed = true;
 
-        const x = index % GRID_SIZE;
-        const y = Math.floor(index / GRID_SIZE);
+        const { x, y } = indexToCoords(index);
 
-        if (x > 0) stack.push(index - 1);
-        if (x < GRID_SIZE - 1) stack.push(index + 1);
-        if (y > 0) stack.push(index - GRID_SIZE);
-        if (y < GRID_SIZE - 1) stack.push(index + GRID_SIZE);
+        const neighbors = [
+          { x: x - 1, y },
+          { x: x + 1, y },
+          { x, y: y - 1 },
+          { x, y: y + 1 },
+        ];
+
+        for (const { x: nx, y: ny } of neighbors) {
+          if (!isInBounds(nx, ny)) continue;
+          stack.push(coordsToIndex(nx, ny));
+        }
       }
 
       if (!changed) {
@@ -640,7 +714,7 @@ export function PixelPencil() {
     if (changed) {
       actionModifiedRef.current = true;
     }
-  }, []);
+  }, [coordsToIndex, indexToCoords, isInBounds]);
 
   useEffect(() => {
     const handlePointerUp = () => {
@@ -667,15 +741,15 @@ export function PixelPencil() {
         Number.isNaN(column) ||
         Number.isNaN(row) ||
         column < 0 ||
-        column >= GRID_SIZE ||
+        column >= gridWidth ||
         row < 0 ||
-        row >= GRID_SIZE
+        row >= gridHeight
       ) {
         return null;
       }
-      return row * GRID_SIZE + column;
+      return coordsToIndex(column, row);
     },
-    [displayCellSize],
+    [coordsToIndex, displayCellSize, gridHeight, gridWidth],
   );
 
   const handlePointerDown = useCallback(
@@ -907,17 +981,23 @@ export function PixelPencil() {
 
       region.add(index);
 
-      const x = index % GRID_SIZE;
-      const y = Math.floor(index / GRID_SIZE);
+      const { x, y } = indexToCoords(index);
 
-      if (x > 0) stack.push(index - 1);
-      if (x < GRID_SIZE - 1) stack.push(index + 1);
-      if (y > 0) stack.push(index - GRID_SIZE);
-      if (y < GRID_SIZE - 1) stack.push(index + GRID_SIZE);
+      const neighbors = [
+        { x: x - 1, y },
+        { x: x + 1, y },
+        { x, y: y - 1 },
+        { x, y: y + 1 },
+      ];
+
+      for (const { x: nx, y: ny } of neighbors) {
+        if (!isInBounds(nx, ny)) continue;
+        stack.push(coordsToIndex(nx, ny));
+      }
     }
 
     return region;
-  }, [hoverIndex, pixels, previewToolEffects, tool]);
+  }, [coordsToIndex, hoverIndex, indexToCoords, isInBounds, pixels, previewToolEffects, tool]);
 
   const brushPreview = useMemo(() => {
     if (
@@ -933,8 +1013,7 @@ export function PixelPencil() {
   const cells = useMemo(
     () =>
       pixels.map((pixel, index) => {
-        const x = index % GRID_SIZE;
-        const y = Math.floor(index / GRID_SIZE);
+        const { x, y } = indexToCoords(index);
         const key = `${x}-${y}`;
         const isTransparent = pixel === null || pixel === "transparent";
         const patternColor =
@@ -994,6 +1073,7 @@ export function PixelPencil() {
       tool,
       displayCellSize,
       showPixelGrid,
+      indexToCoords,
     ],
   );
 
@@ -1003,14 +1083,14 @@ export function PixelPencil() {
     if (isAlreadyEmpty) return;
     recordSnapshot();
     redoStackRef.current = [];
-    const cleared = makeEmptyGrid();
+    const cleared = new Array(totalCells).fill(null) as PixelValue[];
     pixelsRef.current = cleared;
     setPixels(cleared);
     setHoverIndex(null);
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [recordSnapshot, setPixels, updateHistoryState]);
+  }, [recordSnapshot, setPixels, totalCells, updateHistoryState]);
 
  
 
@@ -1085,8 +1165,8 @@ export function PixelPencil() {
 
   const downloadPng = useCallback(() => {
     const canvas = document.createElement("canvas");
-    canvas.width = GRID_SIZE;
-    canvas.height = GRID_SIZE;
+    canvas.width = gridWidth;
+    canvas.height = gridHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       return;
@@ -1096,8 +1176,7 @@ export function PixelPencil() {
 
     for (let index = 0; index < pixels.length; index += 1) {
       const color = pixels[index];
-      const x = index % GRID_SIZE;
-      const y = Math.floor(index / GRID_SIZE);
+      const { x, y } = indexToCoords(index);
       if (color === null || color === "transparent") {
         ctx.clearRect(x, y, 1, 1);
       } else {
@@ -1186,8 +1265,8 @@ export function PixelPencil() {
               ref={gridRef}
               className="grid mx-auto max-w-full rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
               style={{
-                gridTemplateColumns: `repeat(${GRID_SIZE}, ${displayCellSize}px)`,
-                gridTemplateRows: `repeat(${GRID_SIZE}, ${displayCellSize}px)`,
+                gridTemplateColumns: `repeat(${gridWidth}, ${displayCellSize}px)`,
+                gridTemplateRows: `repeat(${gridHeight}, ${displayCellSize}px)`,
                 }}
             >
               {cells}

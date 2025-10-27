@@ -10,13 +10,18 @@ import {
   type SetStateAction,
 } from "react";
 
-type CanvasPixelSizeOption = 13 | 16 | 19;
+type CanvasPixelSizeOption = 8 | 13 | 16 | 19 | 32;
+type GridDimensionOption = 16 | 32 | 64;
 
 interface PixelPencilSettingsContextValue {
   previewToolEffects: boolean;
   setPreviewToolEffects: Dispatch<SetStateAction<boolean>>;
   canvasPixelSize: CanvasPixelSizeOption;
   setCanvasPixelSize: Dispatch<SetStateAction<CanvasPixelSizeOption>>;
+  gridWidth: GridDimensionOption;
+  gridHeight: GridDimensionOption;
+  setGridWidth: Dispatch<SetStateAction<GridDimensionOption>>;
+  setGridHeight: Dispatch<SetStateAction<GridDimensionOption>>;
   showPixelGrid: boolean;
   setShowPixelGrid: Dispatch<SetStateAction<boolean>>;
 }
@@ -32,6 +37,8 @@ export function PixelPencilSettingsProvider({
   const [previewToolEffects, setPreviewToolEffects] = useState(true);
   const [canvasPixelSize, setCanvasPixelSize] =
     useState<CanvasPixelSizeOption>(16);
+  const [gridWidth, setGridWidth] = useState<GridDimensionOption>(32);
+  const [gridHeight, setGridHeight] = useState<GridDimensionOption>(32);
   const [showPixelGrid, setShowPixelGrid] = useState(false);
 
   const value = useMemo(
@@ -40,10 +47,20 @@ export function PixelPencilSettingsProvider({
       setPreviewToolEffects,
       canvasPixelSize,
       setCanvasPixelSize,
+      gridWidth,
+      gridHeight,
+      setGridWidth,
+      setGridHeight,
       showPixelGrid,
       setShowPixelGrid,
     }),
-    [previewToolEffects, canvasPixelSize, showPixelGrid],
+    [
+      previewToolEffects,
+      canvasPixelSize,
+      gridWidth,
+      gridHeight,
+      showPixelGrid,
+    ],
   );
 
   return (
@@ -64,7 +81,15 @@ export function usePixelPencilSettings() {
 }
 
 export const CANVAS_PIXEL_SIZE_OPTIONS: ReadonlyArray<CanvasPixelSizeOption> = [
+  8,
   13,
   16,
   19,
+  32,
+] as const;
+
+export const GRID_DIMENSION_OPTIONS: ReadonlyArray<GridDimensionOption> = [
+  16,
+  32,
+  64,
 ] as const;
