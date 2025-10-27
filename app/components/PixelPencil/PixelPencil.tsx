@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { PaintTool, PaletteTheme, BrushShape, PaletteColor, PixelValue, ShapeKind } from "./PixelPencilTypes";
 import { BucketTool, ColorPickerTool, EraserTool, LineTool, MagnifierTool, PencilTool, ShapeTool } from "./PixelPencilTools";
@@ -78,6 +78,7 @@ export function PixelPencil() {
   const actionInProgressRef = useRef(false);
   const actionModifiedRef = useRef(false);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
+  const wrapperSizeRef = useRef({ scrollWidth: 0, scrollHeight: 0 });
   const gridRef = useRef<HTMLDivElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
@@ -98,6 +99,10 @@ export function PixelPencil() {
     () => [...currentPalette.colors, "transparent"] as PaletteColor[],
     [currentPalette],
   );
+
+  useEffect(() => {
+    console.log(gridWrapperRef.current?.scrollWidth)
+  }, [zoomScale])
 
   const indexToCoords = useCallback(
     (index: number) => ({
@@ -151,6 +156,25 @@ export function PixelPencil() {
     () => baseCellSize * zoomScale,
     [baseCellSize, zoomScale],
   );
+
+  useLayoutEffect(() => {
+    const wrapper = gridWrapperRef.current;
+    if (!wrapper) return;
+
+    const update = () => {
+      wrapperSizeRef.current = {
+        scrollWidth: wrapper.scrollWidth,
+        scrollHeight: wrapper.scrollHeight,
+      };
+    };
+
+    update();
+
+    const resizeObserver = new ResizeObserver(update);
+    resizeObserver.observe(wrapper);
+
+    return () => resizeObserver.disconnect();
+  }, [zoomScale, gridWidth, gridHeight, baseCellSize]);
 
   useEffect(() => {
     pixelsRef.current = pixels;
@@ -348,7 +372,7 @@ export function PixelPencil() {
   const handleOpenResetDialog = useCallback(() => {
     setIsResetDialogOpen(true);
   }, []);
-  
+
   useEffect(() => {
     const handleToolHotkeys = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
@@ -759,6 +783,19 @@ export function PixelPencil() {
       if (tool === "magnifier") {
         const direction = event.shiftKey ? "out" : zoomMode;
         applyZoom(direction);
+
+        const { x, y } = indexToCoords(index);
+        requestAnimationFrame(() => {
+          const wrapper = gridWrapperRef.current;
+          if (!wrapper) return;
+
+          const width = wrapper.scrollWidth;
+          const height = wrapper.scrollHeight;
+          gridWrapperRef.current?.scrollTo({
+            left: ((width/gridWidth)) * x/2,
+            top: ((height/gridHeight)) * y/2,
+          });
+        });
         return;
       }
 
@@ -1032,7 +1069,7 @@ export function PixelPencil() {
     updateHistoryState();
   }, [recordSnapshot, setPixels, totalCells, updateHistoryState]);
 
- 
+
 
   const handleCloseResetDialog = useCallback(() => {
     setIsResetDialogOpen(false);
