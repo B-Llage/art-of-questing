@@ -11,6 +11,7 @@ export interface PaintTool {
     selectedColor?: boolean;
     shapeType?: boolean;
     shapeFilled?: boolean;
+    zoomMode?: boolean;
   };
 }
 

@@ -76,3 +76,13 @@ export const EraserTool: PaintTool = {
   },
   hotkey: "w",
 };
+
+export const MagnifierTool: PaintTool = {
+  id: "magnifier",
+  label: "Magnifier",
+  icon: "/icons/tools/MagnifyingGlass.png",
+  settings: {
+    zoomMode: true,
+  },
+  hotkey: "z",
+};
