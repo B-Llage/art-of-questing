@@ -79,11 +79,14 @@ export function PixelPencil() {
   const actionModifiedRef = useRef(false);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const wrapperSizeRef = useRef({ scrollWidth: 0, scrollHeight: 0 });
+  const wrapperParentWidthRef = useRef<number | null>(null);
+  const wrapperParentHeightRef = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
   const [pathPreview, setPathPreview] = useState<Set<number> | null>(null);
   const [availableWidth, setAvailableWidth] = useState<number>(0);
+  const [availableHeight, setAvailableHeight] = useState<number>(0);
   const prevDimensionsRef = useRef({ width: gridWidth, height: gridHeight });
   const currentPalette = useMemo(() => {
     const found = PALETTE_THEMES.find((theme) => theme.id === paletteThemeId);
@@ -99,11 +102,6 @@ export function PixelPencil() {
     () => [...currentPalette.colors, "transparent"] as PaletteColor[],
     [currentPalette],
   );
-
-  useEffect(() => {
-    console.log(gridWrapperRef.current?.scrollWidth)
-  }, [zoomScale])
-
   const indexToCoords = useCallback(
     (index: number) => ({
       x: index % gridWidth,
@@ -156,6 +154,7 @@ export function PixelPencil() {
     () => baseCellSize * zoomScale,
     [baseCellSize, zoomScale],
   );
+  const GRID_PADDING = 16;
 
   useLayoutEffect(() => {
     const wrapper = gridWrapperRef.current;
@@ -234,8 +233,50 @@ export function PixelPencil() {
       return;
     }
     const updateSize = () => {
-      if (!gridWrapperRef.current) return;
-      setAvailableWidth(gridWrapperRef.current.clientWidth);
+      const wrapper = gridWrapperRef.current;
+      if (!wrapper) return;
+      const measuredWidth = wrapper.clientWidth;
+      const parentWidth =
+        wrapper.parentElement?.clientWidth ?? measuredWidth;
+      const previousParentWidth = wrapperParentWidthRef.current;
+      const measuredHeight = wrapper.clientHeight;
+      const parentHeight =
+        wrapper.parentElement?.clientHeight ?? measuredHeight;
+      const previousParentHeight = wrapperParentHeightRef.current;
+
+      setAvailableWidth((prev) => {
+        if (prev === 0) {
+          return measuredWidth;
+        }
+
+        if (
+          previousParentWidth !== null &&
+          parentWidth < previousParentWidth - 1
+        ) {
+          return measuredWidth;
+        }
+
+        return measuredWidth > prev ? measuredWidth : prev;
+      });
+
+      wrapperParentWidthRef.current = parentWidth;
+
+      setAvailableHeight((prev) => {
+        if (prev === 0) {
+          return measuredHeight;
+        }
+
+        if (
+          previousParentHeight !== null &&
+          parentHeight < previousParentHeight - 1
+        ) {
+          return measuredHeight;
+        }
+
+        return measuredHeight > prev ? measuredHeight : prev;
+      });
+
+      wrapperParentHeightRef.current = parentHeight;
     };
     updateSize();
     const observer = new ResizeObserver(updateSize);
@@ -756,8 +797,12 @@ export function PixelPencil() {
     (event: ReactPointerEvent<Element>) => {
       if (!gridRef.current || displayCellSize <= 0) return null;
       const rect = gridRef.current.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
+      const paddingOffset = GRID_PADDING / 2;
+      const x = event.clientX - rect.left - paddingOffset;
+      const y = event.clientY - rect.top - paddingOffset;
+      if (x < 0 || y < 0) {
+        return null;
+      }
       const column = Math.floor(x / displayCellSize);
       const row = Math.floor(y / displayCellSize);
       if (
@@ -792,8 +837,8 @@ export function PixelPencil() {
           const width = wrapper.scrollWidth;
           const height = wrapper.scrollHeight;
           gridWrapperRef.current?.scrollTo({
-            left: ((width/gridWidth)) * x/2,
-            top: ((height/gridHeight)) * y/2,
+            left: ((width/gridWidth)) * x,
+            top: ((height/gridHeight)) * y,
           });
         });
         return;
@@ -1172,7 +1217,7 @@ export function PixelPencil() {
         <span>Bucket fills enclosed regions</span>
       </div>
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
+        <div className="flex justify-center min-w-0 flex-1 flex-col gap-4">
           <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
             <div className="flex flex-col gap-4">
               <div className="flex flex-wrap items-center justify-between gap-4">
@@ -1199,6 +1244,8 @@ export function PixelPencil() {
             pathPreview={pathPreview}
             drawValueRef={drawValueRef}
             tool={tool}
+            wrapperMaxWidth={availableWidth}
+            wrapperMaxHeight={availableHeight}
             handlePointerDown={handlePointerDown}
             handlePointerEnter={handlePointerEnter}
             handlePointerMove={handlePointerMove}
@@ -1254,7 +1301,7 @@ export function PixelPencil() {
             </button>
           </div>
         </div>
-        <aside className="w-full flex-shrink-0 lg:max-w-xs xl:max-w-sm">
+        <aside className="w-full h-full lg:max-w-xs xl:max-w-sm">
           <ToolSettingsPanel
             currentTool={currentTool}
             brushSize={brushSize}

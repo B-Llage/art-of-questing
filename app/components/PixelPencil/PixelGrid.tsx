@@ -23,6 +23,8 @@ interface PixelGridProps {
   pathPreview: Set<number> | null;
   drawValueRef: MutableRefObject<PixelValue>;
   tool: string;
+  wrapperMaxWidth: number;
+  wrapperMaxHeight: number;
   handlePointerDown: (
     event: ReactPointerEvent<HTMLButtonElement>,
     index: number,
@@ -52,6 +54,8 @@ export function PixelGrid({
   pathPreview,
   drawValueRef,
   tool,
+  wrapperMaxWidth,
+  wrapperMaxHeight,
   handlePointerDown,
   handlePointerEnter,
   handlePointerMove,
@@ -129,15 +133,19 @@ export function PixelGrid({
   return (
     <div
       ref={gridWrapperRef}
-      className={`w-full touch-none max-h-[70vh] ${
+      className={`max-h-min touch-none h-min ${
         zoomScale > 1
           ? "overflow-auto"
           : "flex justify-center overflow-hidden"
       }`}
+      style={{
+        maxWidth: wrapperMaxWidth > 0 ? `${wrapperMaxWidth}px` : undefined,
+        height: wrapperMaxHeight > 0 ? `${wrapperMaxHeight}px` : undefined,
+      }}
     >
       <div
         ref={gridRef}
-        className={`grid rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 ${
+        className={`h-full grid rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 ${
           zoomScale > 1 ? "min-w-max" : "mx-auto max-w-full"
         }`}
         style={{

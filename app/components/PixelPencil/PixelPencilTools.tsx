@@ -25,7 +25,7 @@ export const LineTool: PaintTool = {
     palette: true,
     selectedColor: true,
   },
-  hotkey: "l",
+  hotkey: "d",
 };
 
 export const ShapeTool: PaintTool = {
@@ -84,5 +84,5 @@ export const MagnifierTool: PaintTool = {
   settings: {
     zoomMode: true,
   },
-  hotkey: "z",
+  hotkey: "a",
 };
