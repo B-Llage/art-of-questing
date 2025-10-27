@@ -24,11 +24,11 @@ export const BRUSH_SIZES = [1, 2, 3] as const;
 
 const TOOLS: readonly PaintTool[] = [
   PencilTool,
-  LineTool,
-  ShapeTool,
   EraserTool,
-  BucketTool,
   ColorPickerTool,
+  ShapeTool,
+  LineTool,
+  BucketTool,
 ] as const;
 
 const PALETTE_THEMES: readonly PaletteTheme[] = PixelPencilPalettes;
@@ -1257,10 +1257,10 @@ export function PixelPencil() {
                   Toolbox
                 </span>
               </div>
-              <div className="flex flex-wrap gap-3">{toolButtons}</div>
+              <div className="flex flex-wrap justify-center gap-3">{toolButtons}</div>
             </div>
           </div>
-          <div ref={gridWrapperRef} className="w-full overflow-hidden touch-none">
+          <div ref={gridWrapperRef} className="w-full flex justify-center overflow-hidden touch-none">
             <div
               ref={gridRef}
               className="grid mx-auto max-w-full rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"

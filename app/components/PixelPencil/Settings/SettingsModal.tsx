@@ -1,6 +1,5 @@
-import { useMemo } from "react";
+import { useEffect } from "react";
 import {
-  CANVAS_PIXEL_SIZE_OPTIONS,
   GRID_DIMENSION_OPTIONS,
   usePixelPencilSettings,
 } from "../PixelPencilSettingsContext";
@@ -14,8 +13,6 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
     const {
         previewToolEffects,
         setPreviewToolEffects,
-        canvasPixelSize,
-        setCanvasPixelSize,
         gridWidth,
         setGridWidth,
         gridHeight,
@@ -24,19 +21,10 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
         setShowPixelGrid,
       } = usePixelPencilSettings();
 
-        const canvasSizeOptions = useMemo(() => {
-          const labelMap: Record<(typeof CANVAS_PIXEL_SIZE_OPTIONS)[number], string> = {
-            8: "XS",
-            13: "Small",
-            16: "Medium",
-            19: "Large",
-            32: "XL",
-          };
-          return CANVAS_PIXEL_SIZE_OPTIONS.map((size) => ({
-            size,
-            label: labelMap[size],
-          }));
-        }, []);
+        useEffect(() => {
+          console.log(gridHeight, gridWidth);
+          console.log(GRID_DIMENSION_OPTIONS)
+        }, [gridHeight, gridWidth]);
 
     return <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
@@ -109,9 +97,9 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
                       <button
                         key={`grid-width-${size}`}
                         type="button"
-                    className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
+                     className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
                           isSelected
-                            ? "bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                            ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                             : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
                         }`}
                         onClick={() => setGridWidth(size)}
@@ -133,9 +121,9 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
                       <button
                         key={`grid-height-${size}`}
                         type="button"
-                    className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
+                    className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
                           isSelected
-                            ? "bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                            ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
                             : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
                         }`}
                         onClick={() => setGridHeight(size)}
@@ -146,31 +134,7 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
                   })}
                 </div>
               </div>
-              <div className="flex flex-col gap-3">
-                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                  Canvas Pixel Size
-                </span>
-                <div className="flex flex-wrap gap-3">
-                  {canvasSizeOptions.map(({ size, label }) => {
-                    const isSelected = size === canvasPixelSize;
-                    return (
-                      <button
-                        key={size}
-                        type="button"
-                        className={`flex flex-col items-center rounded-lg border px-4 py-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
-                          isSelected
-                            ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                            : "border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                        }`}
-                        onClick={() => setCanvasPixelSize(size)}
-                      >
-                        <span className="font-medium">{label}</span>
-                        <span className="text-xs opacity-80">{size}px</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+             
             </div>
             <div className="mt-6 flex justify-end">
               <button
