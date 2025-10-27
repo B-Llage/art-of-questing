@@ -1204,26 +1204,23 @@ export function PixelPencil() {
           <button
             key={option.id}
             type="button"
-            className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${isSelected
+            className={`flex items-center justify-center rounded-full border border-zinc-300 p-3 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${isSelected
               ? "bg-black text-white dark:bg-white dark:text-black"
               : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
               }`}
             onClick={() => setTool(option.id)}
+            aria-label={option.label}
+            title={option.label}
           >
-            <div className="flex flex-col items-center gap-2">
-              <Image
-                src={option.icon}
-                width={32}
-                height={32}
-                alt={`${option.label} icon`}
-                unoptimized
-                style={{ imageRendering: "pixelated" }}
-              />
-              <span>{option.label}</span>
-            </div>
-
+            <Image
+              src={option.icon}
+              width={32}
+              height={32}
+              alt={`${option.label} icon`}
+              unoptimized
+              style={{ imageRendering: "pixelated" }}
+            />
           </button>
-
         );
       }),
     [tool],

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PaletteTheme } from "../../PixelPencilTypes";
 import { PixelPencilPalettes } from "../../PixelPencilPalettes";
 import { PaletteColor, PixelValue } from "../../PixelPencil";
@@ -14,10 +14,6 @@ interface PaletteColorSelectorProps {
 export function PaletteThemeSelector({ paletteThemeId,  currentPalette, drawValueRef, setPaletteThemeId, setActiveColor, }: PaletteColorSelectorProps) {
     const [isPaletteMenuOpen, setIsPaletteMenuOpen] = useState(false);
     const paletteMenuRef = useRef<HTMLDivElement | null>(null);
-      const paletteColors = useMemo(
-    () => [...currentPalette.colors, "transparent"] as PaletteColor[],
-    [currentPalette],
-  );
 
     useEffect(() => {
         if (!isPaletteMenuOpen) return;
@@ -45,12 +41,12 @@ export function PaletteThemeSelector({ paletteThemeId,  currentPalette, drawValu
                     onClick={() => setIsPaletteMenuOpen((prev) => !prev)}
                 >
                     <span>{currentPalette.name}</span>
-                    <span className="flex items-center gap-1">
-                        {[...currentPalette.colors, "transparent"].map((color) => {
+                    <span className="grid grid-cols-9 gap-1 place-items-center">
+                        {currentPalette.colors.map((color, index) => {
                             const isTransparent = color === "transparent";
                             return (
                                 <span
-                                    key={`${currentPalette.id}-${color}`}
+                                    key={`${currentPalette.id}-${color}-${index}`}
                                     className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
                                     style={{
                                         backgroundColor: isTransparent ? "transparent" : color,
@@ -69,7 +65,7 @@ export function PaletteThemeSelector({ paletteThemeId,  currentPalette, drawValu
                     <div className="absolute z-10 mt-2 w-full rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
                         {PALETTE_THEMES.map((theme) => {
                             const isSelected = theme.id === paletteThemeId;
-                            const previewColors = [...theme.colors, "transparent"];
+                            const previewColors = theme.colors;
                             return (
                                 <button
                                     key={theme.id}
@@ -92,12 +88,12 @@ export function PaletteThemeSelector({ paletteThemeId,  currentPalette, drawValu
                                     }}
                                 >
                                     <span className="font-medium">{theme.name}</span>
-                                    <span className="flex items-center gap-1">
-                                        {previewColors.map((color) => {
+                                    <span className="grid grid-cols-9 gap-1 place-items-center">
+                                        {previewColors.map((color, index) => {
                                             const isTransparent = color === "transparent";
                                             return (
                                                 <span
-                                                    key={`${theme.id}-preview-${color}`}
+                                                    key={`${theme.id}-preview-${color}-${index}`}
                                                     className="h-4 w-4 rounded-sm border border-zinc-200 dark:border-zinc-700"
                                                     style={{
                                                         backgroundColor: isTransparent ? "transparent" : color,
