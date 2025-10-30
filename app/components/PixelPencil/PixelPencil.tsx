@@ -185,6 +185,7 @@ export function PixelPencil() {
   const wrapperParentHeightRef = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
+  const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
   const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
   const [pathPreview, setPathPreview] = useState<Set<number> | null>(null);
   const [availableWidth, setAvailableWidth] = useState<number>(0);
@@ -1177,6 +1178,7 @@ export function PixelPencil() {
     activePointerIdRef.current = null;
     setDragStartIndex(null);
     setPathPreview(null);
+    lastPointerPositionRef.current = null;
     finalizeAction();
   }, [finalizeAction]);
 
@@ -1242,37 +1244,143 @@ export function PixelPencil() {
     return () => window.removeEventListener("pointerup", handlePointerUp);
   }, [dragStartIndex, stopStroke, tool]);
 
-  const resolveIndexFromPointerEvent = useCallback(
-    (event: ReactPointerEvent<Element>) => {
+  const resolvePositionFromClientPoint = useCallback(
+    (clientX: number, clientY: number) => {
       if (!gridRef.current || displayCellSize <= 0) return null;
       const rect = gridRef.current.getBoundingClientRect();
       const paddingOffset = GRID_PADDING / 2;
-      const x = event.clientX - rect.left - paddingOffset;
-      const y = event.clientY - rect.top - paddingOffset;
-      if (x < 0 || y < 0) {
+      const x = (clientX - rect.left - paddingOffset) / displayCellSize;
+      const y = (clientY - rect.top - paddingOffset) / displayCellSize;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
         return null;
       }
-      const column = Math.floor(x / displayCellSize);
-      const row = Math.floor(y / displayCellSize);
-      if (
-        Number.isNaN(column) ||
-        Number.isNaN(row) ||
-        column < 0 ||
-        column >= gridWidth ||
-        row < 0 ||
-        row >= gridHeight
-      ) {
-        return null;
-      }
-      return coordsToIndex(column, row);
+      return { x, y };
     },
-    [coordsToIndex, displayCellSize, gridHeight, gridWidth],
+    [displayCellSize],
   );
+
+  const resolveIndexFromClientPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const position = resolvePositionFromClientPoint(clientX, clientY);
+      if (!position) return null;
+      const cellX = Math.floor(position.x);
+      const cellY = Math.floor(position.y);
+      if (!isInBounds(cellX, cellY)) return null;
+      return coordsToIndex(cellX, cellY);
+    },
+    [coordsToIndex, isInBounds, resolvePositionFromClientPoint],
+  );
+
+  const resolveIndexFromPointerEvent = useCallback(
+    (event: ReactPointerEvent<Element>) =>
+      resolveIndexFromClientPoint(event.clientX, event.clientY),
+    [resolveIndexFromClientPoint],
+  );
+
+  const drawPointerSegment = useCallback(
+    (position: { x: number; y: number }) => {
+      const previous = lastPointerPositionRef.current;
+      lastPointerPositionRef.current = position;
+
+      const cellX = Math.floor(position.x);
+      const cellY = Math.floor(position.y);
+      if (!isInBounds(cellX, cellY)) {
+        return;
+      }
+      const targetIndex = coordsToIndex(cellX, cellY);
+
+      if (!previous) {
+        continueStroke(targetIndex);
+        setHoverIndex(targetIndex);
+        return;
+      }
+
+      const deltaX = position.x - previous.x;
+      const deltaY = position.y - previous.y;
+      const maxDelta = Math.max(Math.abs(deltaX), Math.abs(deltaY));
+      if (!Number.isFinite(maxDelta) || maxDelta <= 0) {
+        setHoverIndex(targetIndex);
+        return;
+      }
+
+      const steps = Math.ceil(maxDelta);
+      const incrementX = deltaX / steps;
+      const incrementY = deltaY / steps;
+      let x = previous.x;
+      let y = previous.y;
+
+      for (let step = 0; step < steps; step += 1) {
+        x += incrementX;
+        y += incrementY;
+        const intermediateCellX = Math.floor(x);
+        const intermediateCellY = Math.floor(y);
+        if (!isInBounds(intermediateCellX, intermediateCellY)) {
+          continue;
+        }
+        const index = coordsToIndex(intermediateCellX, intermediateCellY);
+        continueStroke(index);
+      }
+      setHoverIndex(targetIndex);
+    },
+    [continueStroke, coordsToIndex, isInBounds, setHoverIndex],
+  );
+
+  const processDrawingSamples = useCallback(
+    (samples: PointerEvent[]) => {
+      for (const sample of samples) {
+        const position = resolvePositionFromClientPoint(
+          sample.clientX,
+          sample.clientY,
+        );
+        if (!position) continue;
+        drawPointerSegment(position);
+      }
+    },
+    [drawPointerSegment, resolvePositionFromClientPoint],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleGlobalPointerMove = (event: PointerEvent) => {
+      if (!isDrawingRef.current) return;
+      if (
+        activePointerIdRef.current !== null &&
+        event.pointerId !== activePointerIdRef.current
+      ) {
+        return;
+      }
+      const coalesced =
+        typeof event.getCoalescedEvents === "function"
+          ? event.getCoalescedEvents()
+          : [];
+      const samples =
+        coalesced.length > 0 ? [...coalesced, event] : [event];
+      processDrawingSamples(samples);
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener("pointermove", handleGlobalPointerMove, { passive: false });
+    return () => {
+      window.removeEventListener("pointermove", handleGlobalPointerMove);
+    };
+  }, [processDrawingSamples]);
 
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>, index: number) => {
       event.preventDefault();
       setHoverIndex(index);
+      const pointerPosition = resolvePositionFromClientPoint(
+        event.clientX,
+        event.clientY,
+      );
+      if (pointerPosition) {
+        lastPointerPositionRef.current = pointerPosition;
+      } else {
+        const { x, y } = indexToCoords(index);
+        lastPointerPositionRef.current = { x: x + 0.5, y: y + 0.5 };
+      }
 
       if (tool === "magnifier") {
         const direction = event.shiftKey ? "out" : zoomMode;
@@ -1365,6 +1473,7 @@ export function PixelPencil() {
       floodFill,
       lastPointedIndex,
       previewToolEffects,
+      resolvePositionFromClientPoint,
       shapeFilled,
       shapeType,
       startStroke,
@@ -1382,6 +1491,16 @@ export function PixelPencil() {
         return;
       }
       event.preventDefault();
+      const position = resolvePositionFromClientPoint(
+        event.clientX,
+        event.clientY,
+      );
+      if (position) {
+        lastPointerPositionRef.current = position;
+      } else {
+        const { x, y } = indexToCoords(index);
+        lastPointerPositionRef.current = { x: x + 0.5, y: y + 0.5 };
+      }
       if (tool === "line" || tool === "shape") {
         if (dragStartIndex === null) return;
         if (previewToolEffects) {
@@ -1402,6 +1521,7 @@ export function PixelPencil() {
       continueStroke,
       dragStartIndex,
       previewToolEffects,
+      resolvePositionFromClientPoint,
       shapeFilled,
       shapeType,
       tool,
@@ -1411,47 +1531,71 @@ export function PixelPencil() {
 
   const handlePointerMove = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
-      const index = resolveIndexFromPointerEvent(event);
+      const nativeEvent = event.nativeEvent;
+      const coalesced =
+        typeof nativeEvent.getCoalescedEvents === "function"
+          ? nativeEvent.getCoalescedEvents()
+          : [];
+      const samples =
+        coalesced.length > 0 ? [...coalesced, nativeEvent] : [nativeEvent];
+
       if (!isDrawingRef.current) {
+        const lastSample = samples[samples.length - 1];
+        const index = resolveIndexFromClientPoint(
+          lastSample.clientX,
+          lastSample.clientY,
+        );
         setHoverIndex(index ?? null);
         updateShiftLinePreview(event, index);
         return;
       }
       if (
         activePointerIdRef.current !== null &&
-        event.pointerId !== activePointerIdRef.current
+        nativeEvent.pointerId !== activePointerIdRef.current
       ) {
         return;
       }
 
       if (tool === "line" || tool === "shape") {
         if (dragStartIndex === null) return;
-        if (index === null) return;
+        let lastIndex: number | null = null;
+        for (const sample of samples) {
+          const sampleIndex = resolveIndexFromClientPoint(
+            sample.clientX,
+            sample.clientY,
+          );
+          if (sampleIndex === null) continue;
+          lastIndex = sampleIndex;
+        }
+        if (lastIndex === null) return;
         event.preventDefault();
-        setHoverIndex(index);
+        setHoverIndex(lastIndex);
         if (previewToolEffects) {
           const path =
             tool === "line"
-              ? computeLineIndices(dragStartIndex, index)
-              : computeShapeCells(dragStartIndex, index, shapeType, shapeFilled);
+              ? computeLineIndices(dragStartIndex, lastIndex)
+              : computeShapeCells(
+                  dragStartIndex,
+                  lastIndex,
+                  shapeType,
+                  shapeFilled,
+                );
           setPathPreview(buildLinePreview(path));
         }
         return;
       }
 
-      if (index === null) return;
       event.preventDefault();
-      setHoverIndex(index);
-      continueStroke(index);
+      processDrawingSamples(samples);
     },
     [
       buildLinePreview,
       computeLineIndices,
       computeShapeCells,
-      continueStroke,
       dragStartIndex,
       previewToolEffects,
-      resolveIndexFromPointerEvent,
+      processDrawingSamples,
+      resolveIndexFromClientPoint,
       shapeFilled,
       shapeType,
       tool,
