@@ -186,12 +186,15 @@ export function PixelPencil() {
   const wrapperParentHeightRef = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
-  const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerQueueRef = useRef<{ x: number; y: number }[]>([]);
+  const pointerRAFRef = useRef<number | null>(null);
   const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
   const [pathPreview, setPathPreview] = useState<Set<number> | null>(null);
   const [availableWidth, setAvailableWidth] = useState<number>(0);
   const [availableHeight, setAvailableHeight] = useState<number>(0);
   const prevDimensionsRef = useRef({ width: gridWidth, height: gridHeight });
+  const [isMobile, setIsMobile] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
   const setActiveLayerPixels = useCallback(
     (
       next:
@@ -323,6 +326,37 @@ export function PixelPencil() {
     };
   }, [gridHeight, gridWidth, indexToCoords, layers]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const query = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsMobile(query.matches);
+    update();
+    if (typeof query.addEventListener === "function") {
+      query.addEventListener("change", update);
+      return () => query.removeEventListener("change", update);
+    }
+    query.addListener(update);
+    return () => query.removeListener(update);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      pointerQueueRef.current.length = 0;
+      if (pointerRAFRef.current !== null) {
+        window.cancelAnimationFrame(pointerRAFRef.current);
+        pointerRAFRef.current = null;
+      }
+    };
+  }, []);
+
   const isInBounds = useCallback(
     (x: number, y: number) => x >= 0 && x < gridWidth && y >= 0 && y < gridHeight,
     [gridHeight, gridWidth],
@@ -350,14 +384,46 @@ export function PixelPencil() {
       return canvasPixelSize;
     }
     const paddingOffset = 8; // account for grid padding (p-2)
-    const effectiveWidth = Math.max(0, availableWidth - paddingOffset);
-    const maxCellSize = Math.floor(effectiveWidth / gridWidth);
-    if (!Number.isFinite(maxCellSize) || maxCellSize <= 0) {
+    let effectiveWidth = Math.max(0, availableWidth - paddingOffset);
+    if (isMobile && viewportWidth) {
+      const viewportAvailable = Math.max(
+        0,
+        viewportWidth - paddingOffset - 24,
+      );
+      effectiveWidth = Math.min(effectiveWidth, viewportAvailable);
+    }
+    const maxCellSizeWidth = Math.floor(effectiveWidth / gridWidth);
+
+    const dimensionCandidates: number[] = [];
+    if (Number.isFinite(maxCellSizeWidth) && maxCellSizeWidth > 0) {
+      dimensionCandidates.push(maxCellSizeWidth);
+    }
+
+    if (availableHeight) {
+      const effectiveHeight = Math.max(0, availableHeight - paddingOffset);
+      const maxCellSizeHeight = Math.floor(effectiveHeight / gridHeight);
+      if (Number.isFinite(maxCellSizeHeight) && maxCellSizeHeight > 0) {
+        dimensionCandidates.push(maxCellSizeHeight);
+      }
+    }
+
+    if (!dimensionCandidates.length) {
       return canvasPixelSize;
     }
-    const clamped = Math.max(4, maxCellSize);
+
+    const dimensionLimit = Math.min(...dimensionCandidates);
+    const minCellSize = isMobile ? 1 : 4;
+    const clamped = Math.max(minCellSize, dimensionLimit);
     return Math.min(canvasPixelSize, clamped);
-  }, [availableWidth, canvasPixelSize, gridWidth]);
+  }, [
+    availableHeight,
+    availableWidth,
+    canvasPixelSize,
+    gridHeight,
+    gridWidth,
+    isMobile,
+    viewportWidth,
+  ]);
   const displayCellSize = useMemo(
     () => baseCellSize * zoomScale,
     [baseCellSize, zoomScale],
@@ -1179,7 +1245,11 @@ export function PixelPencil() {
     activePointerIdRef.current = null;
     setDragStartIndex(null);
     setPathPreview(null);
-    lastPointerPositionRef.current = null;
+    pointerQueueRef.current.length = 0;
+    if (pointerRAFRef.current !== null) {
+      window.cancelAnimationFrame(pointerRAFRef.current);
+      pointerRAFRef.current = null;
+    }
     finalizeAction();
   }, [finalizeAction]);
 
@@ -1278,66 +1348,46 @@ export function PixelPencil() {
     [resolveIndexFromClientPoint],
   );
 
-  const drawPointerSegment = useCallback(
-    (position: { x: number; y: number }) => {
-      const previous = lastPointerPositionRef.current;
-      lastPointerPositionRef.current = position;
+  const flushPointerQueue = useCallback(() => {
+    pointerRAFRef.current = null;
+    if (!isDrawingRef.current) {
+      pointerQueueRef.current.length = 0;
+      return;
+    }
+    const pending = pointerQueueRef.current.splice(0, pointerQueueRef.current.length);
+    let lastIndex: number | null = null;
+    for (const point of pending) {
+      const index = resolveIndexFromClientPoint(point.x, point.y);
+      if (index === null) continue;
+      continueStroke(index);
+      lastIndex = index;
+    }
+    if (lastIndex !== null) {
+      setHoverIndex(lastIndex);
+    }
+    if (pointerQueueRef.current.length) {
+      pointerRAFRef.current = window.requestAnimationFrame(flushPointerQueue);
+    }
+  }, [continueStroke, resolveIndexFromClientPoint, setHoverIndex]);
 
-      const cellX = Math.floor(position.x);
-      const cellY = Math.floor(position.y);
-      if (!isInBounds(cellX, cellY)) {
-        return;
+  const enqueuePointerPosition = useCallback(
+    (clientX: number, clientY: number) => {
+      if (typeof window === "undefined") return;
+      pointerQueueRef.current.push({ x: clientX, y: clientY });
+      if (pointerRAFRef.current === null) {
+        pointerRAFRef.current = window.requestAnimationFrame(flushPointerQueue);
       }
-      const targetIndex = coordsToIndex(cellX, cellY);
-
-      if (!previous) {
-        continueStroke(targetIndex);
-        setHoverIndex(targetIndex);
-        return;
-      }
-
-      const deltaX = position.x - previous.x;
-      const deltaY = position.y - previous.y;
-      const maxDelta = Math.max(Math.abs(deltaX), Math.abs(deltaY));
-      if (!Number.isFinite(maxDelta) || maxDelta <= 0) {
-        setHoverIndex(targetIndex);
-        return;
-      }
-
-      const steps = Math.ceil(maxDelta);
-      const incrementX = deltaX / steps;
-      const incrementY = deltaY / steps;
-      let x = previous.x;
-      let y = previous.y;
-
-      for (let step = 0; step < steps; step += 1) {
-        x += incrementX;
-        y += incrementY;
-        const intermediateCellX = Math.floor(x);
-        const intermediateCellY = Math.floor(y);
-        if (!isInBounds(intermediateCellX, intermediateCellY)) {
-          continue;
-        }
-        const index = coordsToIndex(intermediateCellX, intermediateCellY);
-        continueStroke(index);
-      }
-      setHoverIndex(targetIndex);
     },
-    [continueStroke, coordsToIndex, isInBounds, setHoverIndex],
+    [flushPointerQueue],
   );
 
   const processDrawingSamples = useCallback(
     (samples: PointerEvent[]) => {
       for (const sample of samples) {
-        const position = resolvePositionFromClientPoint(
-          sample.clientX,
-          sample.clientY,
-        );
-        if (!position) continue;
-        drawPointerSegment(position);
+        enqueuePointerPosition(sample.clientX, sample.clientY);
       }
     },
-    [drawPointerSegment, resolvePositionFromClientPoint],
+    [enqueuePointerPosition],
   );
 
   useEffect(() => {
@@ -1372,15 +1422,10 @@ export function PixelPencil() {
     (event: ReactPointerEvent<HTMLButtonElement>, index: number) => {
       event.preventDefault();
       setHoverIndex(index);
-      const pointerPosition = resolvePositionFromClientPoint(
-        event.clientX,
-        event.clientY,
-      );
-      if (pointerPosition) {
-        lastPointerPositionRef.current = pointerPosition;
-      } else {
-        const { x, y } = indexToCoords(index);
-        lastPointerPositionRef.current = { x: x + 0.5, y: y + 0.5 };
+      pointerQueueRef.current.length = 0;
+      if (pointerRAFRef.current !== null) {
+        window.cancelAnimationFrame(pointerRAFRef.current);
+        pointerRAFRef.current = null;
       }
 
       if (tool === "magnifier") {
@@ -1474,7 +1519,6 @@ export function PixelPencil() {
       floodFill,
       lastPointedIndex,
       previewToolEffects,
-      resolvePositionFromClientPoint,
       shapeFilled,
       shapeType,
       startStroke,
@@ -1492,16 +1536,6 @@ export function PixelPencil() {
         return;
       }
       event.preventDefault();
-      const position = resolvePositionFromClientPoint(
-        event.clientX,
-        event.clientY,
-      );
-      if (position) {
-        lastPointerPositionRef.current = position;
-      } else {
-        const { x, y } = indexToCoords(index);
-        lastPointerPositionRef.current = { x: x + 0.5, y: y + 0.5 };
-      }
       if (tool === "line" || tool === "shape") {
         if (dragStartIndex === null) return;
         if (previewToolEffects) {
@@ -1522,7 +1556,6 @@ export function PixelPencil() {
       continueStroke,
       dragStartIndex,
       previewToolEffects,
-      resolvePositionFromClientPoint,
       shapeFilled,
       shapeType,
       tool,
@@ -1842,6 +1875,9 @@ export function PixelPencil() {
     };
   }, [activeColor]);
 
+  const [isMobileLayersOpen, setIsMobileLayersOpen] = useState(false);
+  const [isMobileSettingsOpen, setIsMobileSettingsOpen] = useState(false);
+
   return (
     <>
       <div className="flex min-h-screen flex-col bg-zinc-950 text-zinc-50 lg:min-h-0 lg:h-full lg:max-h-full">
@@ -1851,7 +1887,7 @@ export function PixelPencil() {
           </div>
         </section>
         <div className="flex flex-1 min-h-0 lg:max-h-full">
-          <aside className="flex w-56 flex-col border-r border-zinc-900 bg-zinc-950 md:w-64 lg:w-72">
+          <aside className="hidden md:flex md:w-64 lg:w-72 flex-col border-r border-zinc-900 bg-zinc-950">
             <div className="flex-1 overflow-y-auto p-6">
               <LayersPanel
                 layers={layers}
@@ -1906,6 +1942,72 @@ export function PixelPencil() {
                 />
               </div>
             </div>
+            <div className="md:hidden space-y-4 px-4 pb-6">
+              <section className="rounded-lg border border-zinc-900 bg-zinc-900">
+                <button
+                  type="button"
+                  onClick={() => setIsMobileLayersOpen((prev) => !prev)}
+                  aria-expanded={isMobileLayersOpen}
+                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold uppercase tracking-wide text-zinc-100"
+                >
+                  <span>Layers</span>
+                  <span className="text-lg leading-none">
+                    {isMobileLayersOpen ? "−" : "+"}
+                  </span>
+                </button>
+                {isMobileLayersOpen ? (
+                  <div className="max-h-80 overflow-y-auto px-4 pb-4">
+                    <LayersPanel
+                      layers={layers}
+                      activeLayerId={activeLayerId}
+                      onSelectLayer={handleSelectLayer}
+                      onCreateLayer={handleCreateLayer}
+                      onDeleteLayer={handleDeleteLayer}
+                      onToggleVisibility={handleToggleLayerVisibility}
+                      onReorderLayers={handleReorderLayers}
+                      layerPreviews={layerPreviews}
+                    />
+                  </div>
+                ) : null}
+              </section>
+              <section className="rounded-lg border border-zinc-900 bg-zinc-900">
+                <button
+                  type="button"
+                  onClick={() => setIsMobileSettingsOpen((prev) => !prev)}
+                  aria-expanded={isMobileSettingsOpen}
+                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold uppercase tracking-wide text-zinc-100"
+                >
+                  <span>Tool Settings</span>
+                  <span className="text-lg leading-none">
+                    {isMobileSettingsOpen ? "−" : "+"}
+                  </span>
+                </button>
+                {isMobileSettingsOpen ? (
+                  <div className="max-h-80 overflow-y-auto px-4 pb-4">
+                    <ToolSettingsPanel
+                      currentTool={currentTool}
+                      brushSize={brushSize}
+                      onBrushSizeChange={setBrushSize}
+                      brushShape={brushShape}
+                      onBrushShapeChange={setBrushShape}
+                      shapeType={shapeType}
+                      onShapeTypeChange={setShapeType}
+                      shapeFilled={shapeFilled}
+                      onShapeFilledChange={setShapeFilled}
+                      zoomMode={zoomMode}
+                      onZoomModeChange={setZoomMode}
+                      paletteThemeId={paletteThemeId}
+                      setPaletteThemeId={setPaletteThemeId}
+                      currentPalette={currentPalette}
+                      drawValueRef={drawValueRef}
+                      setActiveColor={setActiveColor}
+                      paletteColors={paletteColors}
+                      selectedColorStyles={selectedColorStyles}
+                    />
+                  </div>
+                ) : null}
+              </section>
+            </div>
             <div className="border-t border-zinc-900 px-4 py-4 md:px-10">
               <div className="flex flex-wrap items-center justify-center gap-3">
                 <button
@@ -1957,7 +2059,7 @@ export function PixelPencil() {
               </div>
             </div>
           </main>
-          <aside className="w-64 border-l border-zinc-900 bg-zinc-950 p-6 md:w-72 lg:w-80">
+          <aside className="hidden md:block md:w-72 lg:w-80 border-l border-zinc-900 bg-zinc-950 p-6">
             <ToolSettingsPanel
               currentTool={currentTool}
               brushSize={brushSize}

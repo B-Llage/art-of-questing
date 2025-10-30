@@ -140,6 +140,7 @@ export function PixelGrid({
       }`}
       style={{
         maxWidth: wrapperMaxWidth > 0 ? `${wrapperMaxWidth}px` : undefined,
+        width: "100%",
         height: wrapperMaxHeight > 0 ? `${wrapperMaxHeight}px` : undefined,
       }}
     >
