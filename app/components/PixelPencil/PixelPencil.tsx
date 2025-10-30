@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { PaintTool, PaletteTheme, BrushShape, PaletteColor, PixelValue, ShapeKind } from "./PixelPencilTypes";
@@ -1842,109 +1843,121 @@ export function PixelPencil() {
   }, [activeColor]);
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-zinc-600 dark:text-zinc-300">
-        <span>Left click to draw or fill</span>
-        <span>Alt/Ctrl/⌘ or right click to erase</span>
-        <span>Bucket fills enclosed regions</span>
-      </div>
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
-        <div className="flex justify-center min-w-0 flex-1 flex-col gap-4">
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
-                  Toolbox
-                </span>
-              </div>
-              <Toolbox tools={TOOLS} selectedToolId={tool} onSelect={setTool} />
+    <>
+      <div className="flex min-h-screen flex-col bg-zinc-950 text-zinc-50 lg:min-h-0 lg:h-full lg:max-h-full">
+        <section className="border-b border-zinc-900 px-6 py-3 md:px-10">
+          <div className="mx-auto max-w-5xl">
+            <Toolbox tools={TOOLS} selectedToolId={tool} onSelect={setTool} />
+          </div>
+        </section>
+        <div className="flex flex-1 min-h-0 lg:max-h-full">
+          <aside className="flex w-56 flex-col border-r border-zinc-900 bg-zinc-950 md:w-64 lg:w-72">
+            <div className="flex-1 overflow-y-auto p-6">
+              <LayersPanel
+                layers={layers}
+                activeLayerId={activeLayerId}
+                onSelectLayer={handleSelectLayer}
+                onCreateLayer={handleCreateLayer}
+                onDeleteLayer={handleDeleteLayer}
+                onToggleVisibility={handleToggleLayerVisibility}
+                onReorderLayers={handleReorderLayers}
+                layerPreviews={layerPreviews}
+              />
             </div>
-          </div>
-          <PixelGrid
-            gridWidth={gridWidth}
-            gridHeight={gridHeight}
-            displayCellSize={displayCellSize}
-            zoomScale={zoomScale}
-            gridWrapperRef={gridWrapperRef}
-            gridRef={gridRef}
-            pixels={compositePixels}
-            indexToCoords={indexToCoords}
-            showPixelGrid={showPixelGrid}
-            previewToolEffects={previewToolEffects}
-            bucketPreview={bucketPreview}
-            brushPreview={brushPreview}
-            pathPreview={pathPreview}
-            drawValueRef={drawValueRef}
-            tool={tool}
-            wrapperMaxWidth={availableWidth}
-            wrapperMaxHeight={availableHeight}
-            handlePointerDown={handlePointerDown}
-            handlePointerEnter={handlePointerEnter}
-            handlePointerMove={handlePointerMove}
-            handlePointerUp={handlePointerUp}
-            handlePointerLeave={handlePointerLeave}
-          />
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={undo}
-              className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-              disabled={!canUndo}
-              aria-label="Undo"
-            >
-              Undo
-            </button>
-            <button
-              type="button"
-              onClick={redo}
-              className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-              disabled={!canRedo}
-              aria-label="Redo"
-            >
-              Redo
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenResetDialog}
-              className="rounded-full bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 dark:bg-white dark:text-black dark:hover:bg-zinc-200"
-            >
-              Clear
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenSettingsDialog}
-              className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-            >
-              Settings
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsHotkeysDialogOpen(true)}
-              className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-            >
-              Hotkeys
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenSaveDialog}
-              className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
-            >
-              Save PNG
-            </button>
-          </div>
-        </div>
-        <aside className="w-full h-full lg:max-w-xs xl:max-w-sm">
-          <div className="flex h-full flex-col gap-4">
-            <LayersPanel
-              layers={layers}
-              activeLayerId={activeLayerId}
-              onSelectLayer={handleSelectLayer}
-              onCreateLayer={handleCreateLayer}
-              onDeleteLayer={handleDeleteLayer}
-              onToggleVisibility={handleToggleLayerVisibility}
-              onReorderLayers={handleReorderLayers}
-              layerPreviews={layerPreviews}
-            />
+            <div className="border-t border-zinc-900 p-6">
+              <div className="flex h-16 items-end justify-center">
+                <Image
+                  src="/logos/PixiePaintLogo.png"
+                  alt="Pixie Paint Logo"
+                  width={140}
+                  height={40}
+                  priority
+                  style={{ imageRendering: "pixelated" }}
+                />
+              </div>
+            </div>
+          </aside>
+          <main className="flex flex-1 min-w-0 flex-col">
+            <div className="flex-1 overflow-auto px-4 py-6 md:px-10 lg:max-h-full">
+              <div className="flex h-full w-full flex-col items-center justify-center">
+                <PixelGrid
+                  gridWidth={gridWidth}
+                  gridHeight={gridHeight}
+                  displayCellSize={displayCellSize}
+                  zoomScale={zoomScale}
+                  gridWrapperRef={gridWrapperRef}
+                  gridRef={gridRef}
+                  pixels={compositePixels}
+                  indexToCoords={indexToCoords}
+                  showPixelGrid={showPixelGrid}
+                  previewToolEffects={previewToolEffects}
+                  bucketPreview={bucketPreview}
+                  brushPreview={brushPreview}
+                  pathPreview={pathPreview}
+                  drawValueRef={drawValueRef}
+                  tool={tool}
+                  wrapperMaxWidth={availableWidth}
+                  wrapperMaxHeight={availableHeight}
+                  handlePointerDown={handlePointerDown}
+                  handlePointerEnter={handlePointerEnter}
+                  handlePointerMove={handlePointerMove}
+                  handlePointerUp={handlePointerUp}
+                  handlePointerLeave={handlePointerLeave}
+                />
+              </div>
+            </div>
+            <div className="border-t border-zinc-900 px-4 py-4 md:px-10">
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={undo}
+                  className="rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!canUndo}
+                  aria-label="Undo"
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  onClick={redo}
+                  className="rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!canRedo}
+                  aria-label="Redo"
+                >
+                  Redo
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenResetDialog}
+                  className="rounded-full bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-zinc-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900 dark:bg-zinc-50"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenSettingsDialog}
+                  className="rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
+                >
+                  Settings
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsHotkeysDialogOpen(true)}
+                  className="rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
+                >
+                  Hotkeys
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenSaveDialog}
+                  className="rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
+                >
+                  Save PNG
+                </button>
+              </div>
+            </div>
+          </main>
+          <aside className="w-64 border-l border-zinc-900 bg-zinc-950 p-6 md:w-72 lg:w-80">
             <ToolSettingsPanel
               currentTool={currentTool}
               brushSize={brushSize}
@@ -1965,8 +1978,8 @@ export function PixelPencil() {
               paletteColors={paletteColors}
               selectedColorStyles={selectedColorStyles}
             />
-          </div>
-        </aside>
+          </aside>
+        </div>
       </div>
       <PixelPencilModals
         isSaveDialogOpen={isSaveDialogOpen}
@@ -1988,6 +2001,6 @@ export function PixelPencil() {
         handleCloseResetDialog={handleCloseResetDialog}
         handleConfirmReset={handleConfirmReset}
       />
-    </div>
+    </>
   );
 }
