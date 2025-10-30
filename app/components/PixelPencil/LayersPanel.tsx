@@ -16,6 +16,7 @@ interface LayersPanelProps {
   onDeleteLayer: (id: string) => void;
   onToggleVisibility: (id: string) => void;
   onReorderLayers: (fromIndex: number, toIndex: number) => void;
+  layerPreviews: Record<string, string | undefined>;
 }
 
 export function LayersPanel({
@@ -26,6 +27,7 @@ export function LayersPanel({
   onDeleteLayer,
   onToggleVisibility,
   onReorderLayers,
+  layerPreviews,
 }: LayersPanelProps) {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -128,6 +130,7 @@ export function LayersPanel({
           const actualIndex = resolveIndex(layer.id);
           const orderLabel =
             actualIndex === -1 ? "?" : String(layers.length - actualIndex);
+          const previewSrc = layerPreviews[layer.id];
           return (
             <li
               key={layer.id}
@@ -148,8 +151,26 @@ export function LayersPanel({
               <button
                 type="button"
                 onClick={() => onSelectLayer(layer.id)}
-                className="flex flex-1 items-center justify-start gap-2 text-left"
+                className="flex flex-1 items-center justify-start gap-3 text-left"
               >
+                <div
+                  className={`relative h-10 w-10 flex-shrink-0 overflow-hidden rounded border border-zinc-300 dark:border-zinc-600 ${layer.visible ? "" : "opacity-50"}`}
+                  style={{
+                    backgroundImage:
+                      "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)",
+                    backgroundSize: "8px 8px",
+                    backgroundPosition: "0 0, 4px 4px",
+                  }}
+                  aria-hidden="true"
+                >
+                  {previewSrc ? (
+                    <img
+                      src={previewSrc}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : null}
+                </div>
                 <span className="inline-flex h-6 w-6 items-center justify-center rounded bg-zinc-200 text-xs font-semibold text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
                   {orderLabel}
                 </span>

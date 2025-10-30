@@ -149,6 +149,7 @@ export function PixelPencil() {
   const [compositePixels, setCompositePixels] = useState<PixelValue[]>(
     () => createEmptyPixelArray(),
   );
+  const [layerPreviews, setLayerPreviews] = useState<Record<string, string>>({});
   const [paletteThemeId, setPaletteThemeId] = useState<
     (typeof PALETTE_THEMES)[number]["id"]
   >(PALETTE_THEMES[0].id);
@@ -259,6 +260,66 @@ export function PixelPencil() {
     (x: number, y: number) => y * gridWidth + x,
     [gridWidth],
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!layers.length || gridWidth <= 0 || gridHeight <= 0) {
+      setLayerPreviews({});
+      return;
+    }
+    let cancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      const maxDimension = Math.max(gridWidth, gridHeight);
+      const maxPreviewSize = 64;
+      const scale = Math.max(1, Math.floor(maxPreviewSize / maxDimension));
+      const canvas = document.createElement("canvas");
+      canvas.width = gridWidth * scale;
+      canvas.height = gridHeight * scale;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      ctx.imageSmoothingEnabled = false;
+
+      const checkerSize = Math.max(scale, 2);
+      const previews: Record<string, string> = {};
+
+      const drawCheckerboard = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#e4e4e7";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#f4f4f5";
+        for (let y = 0; y < canvas.height; y += checkerSize) {
+          const offset = (Math.floor(y / checkerSize) % 2) * checkerSize;
+          for (let x = offset; x < canvas.width; x += checkerSize * 2) {
+            ctx.fillRect(x, y, checkerSize, checkerSize);
+          }
+        }
+      };
+
+      for (const layer of layers) {
+        drawCheckerboard();
+        ctx.globalAlpha = layer.visible ? 1 : 0.4;
+        for (let index = 0; index < layer.pixels.length; index += 1) {
+          const color = layer.pixels[index];
+          if (color === null || color === "transparent") continue;
+          const { x, y } = indexToCoords(index);
+          ctx.fillStyle = color;
+          ctx.fillRect(x * scale, y * scale, scale, scale);
+        }
+        ctx.globalAlpha = 1;
+        previews[layer.id] = canvas.toDataURL("image/png");
+      }
+
+      if (!cancelled) {
+        setLayerPreviews(previews);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [gridHeight, gridWidth, indexToCoords, layers]);
 
   const isInBounds = useCallback(
     (x: number, y: number) => x >= 0 && x < gridWidth && y >= 0 && y < gridHeight,
@@ -1738,6 +1799,7 @@ export function PixelPencil() {
               onDeleteLayer={handleDeleteLayer}
               onToggleVisibility={handleToggleLayerVisibility}
               onReorderLayers={handleReorderLayers}
+              layerPreviews={layerPreviews}
             />
             <ToolSettingsPanel
               currentTool={currentTool}
