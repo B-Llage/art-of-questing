@@ -124,83 +124,71 @@ export function LayersPanel({
       </div>
       <ul className="flex flex-col gap-2">
         {orderedLayers.map((layer) => {
-          const isActive = layer.id === activeLayerId;
-          const isDragged = layer.id === draggedId;
-          const isDragOver = layer.id === dragOverId;
-          const actualIndex = resolveIndex(layer.id);
-          const orderLabel =
-            actualIndex === -1 ? "?" : String(layers.length - actualIndex);
-          const previewSrc = layerPreviews[layer.id];
-          return (
-            <li
-              key={layer.id}
-              draggable
-              onDragStart={(event) => handleDragStart(event, layer.id)}
-              onDragOver={(event) => handleDragOver(event, layer.id)}
-              onDragLeave={(event) => handleDragLeave(event, layer.id)}
-              onDrop={(event) => handleDrop(event, layer.id)}
-              onDragEnd={handleDragEnd}
-              className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
-                isActive
-                  ? "border-zinc-400 bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800"
-                  : "border-zinc-200 bg-white hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-              } ${isDragged ? "opacity-60" : ""} ${
-                isDragOver ? "ring-2 ring-black dark:ring-white" : ""
-              }`}
+        const isActive = layer.id === activeLayerId;
+        const isDragged = layer.id === draggedId;
+        const isDragOver = layer.id === dragOverId;
+        const previewSrc = layerPreviews[layer.id];
+        return (
+          <li
+            key={layer.id}
+            draggable
+            onDragStart={(event) => handleDragStart(event, layer.id)}
+            onDragOver={(event) => handleDragOver(event, layer.id)}
+            onDragLeave={(event) => handleDragLeave(event, layer.id)}
+            onDrop={(event) => handleDrop(event, layer.id)}
+            onDragEnd={handleDragEnd}
+            className={`flex items-center gap-3 rounded-md border px-3 py-2 text-sm transition-colors ${
+              isActive
+                ? "border-zinc-400 bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800"
+                : "border-zinc-200 bg-white hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+            } ${isDragged ? "opacity-60" : ""} ${
+              isDragOver ? "ring-2 ring-black dark:ring-white" : ""
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => onSelectLayer(layer.id)}
+              className="flex flex-1 items-center justify-start gap-3 text-left"
             >
-              <button
-                type="button"
-                onClick={() => onSelectLayer(layer.id)}
-                className="flex flex-1 items-center justify-start gap-3 text-left"
+              <div
+                className={`relative h-10 w-10 flex-shrink-0 overflow-hidden rounded border border-zinc-300 dark:border-zinc-600 ${layer.visible ? "" : "opacity-50"}`}
+                style={{
+                  backgroundImage:
+                    "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)",
+                  backgroundSize: "8px 8px",
+                  backgroundPosition: "0 0, 4px 4px",
+                }}
+                aria-hidden="true"
               >
-                <div
-                  className={`relative h-10 w-10 flex-shrink-0 overflow-hidden rounded border border-zinc-300 dark:border-zinc-600 ${layer.visible ? "" : "opacity-50"}`}
-                  style={{
-                    backgroundImage:
-                      "linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db), linear-gradient(45deg, #d1d5db 25%, transparent 25%, transparent 75%, #d1d5db 75%, #d1d5db)",
-                    backgroundSize: "8px 8px",
-                    backgroundPosition: "0 0, 4px 4px",
-                  }}
-                  aria-hidden="true"
-                >
-                  {previewSrc ? (
-                    <img
-                      src={previewSrc}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                  ) : null}
-                </div>
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded bg-zinc-200 text-xs font-semibold text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
-                  {orderLabel}
-                </span>
-                <span className="truncate">{layer.name}</span>
-              </button>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={(event) => handleToggleClick(event, layer.id)}
-                  className={`rounded px-2 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
-                    layer.visible
-                      ? "bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-                      : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
-                  }`}
-                  aria-pressed={layer.visible}
-                >
-                  {layer.visible ? "Hide" : "Show"}
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => handleDeleteClick(event, layer.id)}
-                  className="rounded px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-950 dark:focus-visible:ring-red-400 dark:focus-visible:ring-offset-black"
-                  disabled={!canDeleteLayer}
-                >
-                  Delete
-                </button>
+                {previewSrc ? (
+                  <img
+                    src={previewSrc}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                ) : null}
               </div>
-            </li>
-          );
-        })}
+              <span className="truncate">{layer.name}</span>
+            </button>
+            <input
+              type="checkbox"
+              checked={layer.visible}
+              onChange={(event) => handleToggleClick(event as unknown as MouseEvent<HTMLButtonElement>, layer.id)}
+              className="h-4 w-4 rounded border border-zinc-400 text-zinc-600 focus:ring-zinc-500 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100"
+              aria-label={layer.visible ? "Hide layer" : "Show layer"}
+            />
+            <button
+              type="button"
+              onClick={(event) => handleDeleteClick(event, layer.id)}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:bg-red-400 dark:text-black dark:hover:bg-red-500 dark:focus-visible:ring-offset-black disabled:opacity-40"
+              disabled={!canDeleteLayer}
+              aria-label="Delete layer"
+            >
+              <span className="text-base leading-none">−</span>
+            </button>
+          </li>
+        );
+      })}
       </ul>
     </div>
   );
