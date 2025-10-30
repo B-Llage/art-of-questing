@@ -13,6 +13,7 @@ import { Toolbox } from "./Toolbox";
 import { ToolSettingsPanel } from "./ToolSettingsPanel";
 import { PixelGrid } from "./PixelGrid";
 import { PixelPencilModals } from "./PixelPencilModals";
+import { LayersPanel } from "./LayersPanel";
 
 const TOOLS: readonly PaintTool[] = [
   PencilTool,
@@ -37,6 +38,76 @@ const arePixelsEqual = (a: PixelValue[], b: PixelValue[]) => {
   return true;
 };
 
+type Layer = {
+  id: string;
+  name: string;
+  pixels: PixelValue[];
+  visible: boolean;
+};
+
+type LayerSnapshot = {
+  layers: Layer[];
+  activeLayerId: string;
+};
+
+const createLayerId = () =>
+  `layer-${Math.random().toString(36).slice(2, 7)}${Date.now().toString(36)}`;
+
+const cloneLayer = (layer: Layer, totalCells: number): Layer => {
+  const pixels = new Array(totalCells).fill(null) as PixelValue[];
+  const limit = Math.min(totalCells, layer.pixels.length);
+  for (let index = 0; index < limit; index += 1) {
+    pixels[index] = layer.pixels[index] ?? null;
+  }
+  return {
+    ...layer,
+    pixels,
+  };
+};
+
+const cloneLayers = (layers: Layer[], totalCells: number) =>
+  layers.map((layer) => cloneLayer(layer, totalCells));
+
+const areLayersEqual = (a: Layer[], b: Layer[]) => {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    const layerA = a[index];
+    const layerB = b[index];
+    if (
+      layerA.id !== layerB.id ||
+      layerA.name !== layerB.name ||
+      layerA.visible !== layerB.visible ||
+      !arePixelsEqual(layerA.pixels, layerB.pixels)
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const composeLayers = (layers: Layer[], totalCells: number): PixelValue[] => {
+  const composed = new Array(totalCells).fill(null) as PixelValue[];
+  for (let index = 0; index < totalCells; index += 1) {
+    for (let layerIndex = layers.length - 1; layerIndex >= 0; layerIndex -= 1) {
+      const layer = layers[layerIndex];
+      if (!layer.visible) continue;
+      const value = layer.pixels[index];
+      if (value === null || value === "transparent") continue;
+      composed[index] = value;
+      break;
+    }
+  }
+  return composed;
+};
+
+const generateLayerName = (existingLayers: Layer[]) => {
+  let suffix = existingLayers.length + 1;
+  while (existingLayers.some((layer) => layer.name === `Layer ${suffix}`)) {
+    suffix += 1;
+  }
+  return `Layer ${suffix}`;
+};
+
 export function PixelPencil() {
   const {
     previewToolEffects,
@@ -48,8 +119,35 @@ export function PixelPencil() {
   } = usePixelPencilSettings();
 
   const totalCells = gridWidth * gridHeight;
-  const [pixels, setPixels] = useState<PixelValue[]>(() =>
-    new Array(totalCells).fill(null) as PixelValue[],
+  const createEmptyPixelArray = () =>
+    new Array(totalCells).fill(null) as PixelValue[];
+  const initialLayerIdRef = useRef<string | null>(null);
+  if (!initialLayerIdRef.current) {
+    initialLayerIdRef.current = createLayerId();
+  }
+  const initialLayerPixelsRef = useRef<PixelValue[] | null>(null);
+  if (
+    !initialLayerPixelsRef.current ||
+    initialLayerPixelsRef.current.length !== totalCells
+  ) {
+    initialLayerPixelsRef.current = createEmptyPixelArray();
+  }
+  const [layers, setLayers] = useState<Layer[]>(() => [
+    {
+      id: initialLayerIdRef.current as string,
+      name: "Layer 1",
+      pixels: initialLayerPixelsRef.current as PixelValue[],
+      visible: true,
+    },
+  ]);
+  const [activeLayerId, setActiveLayerId] = useState<string>(
+    initialLayerIdRef.current as string,
+  );
+  const [activeLayerPixels, setActiveLayerPixelsState] = useState<PixelValue[]>(
+    initialLayerPixelsRef.current as PixelValue[],
+  );
+  const [compositePixels, setCompositePixels] = useState<PixelValue[]>(
+    () => createEmptyPixelArray(),
   );
   const [paletteThemeId, setPaletteThemeId] = useState<
     (typeof PALETTE_THEMES)[number]["id"]
@@ -73,9 +171,11 @@ export function PixelPencil() {
   const isDrawingRef = useRef(false);
   const drawValueRef = useRef<PixelValue>(PALETTE_THEMES[0].colors[0]);
   const lastPaintedIndexRef = useRef<number | null>(null);
-  const pixelsRef = useRef(pixels);
-  const undoStackRef = useRef<PixelValue[][]>([]);
-  const redoStackRef = useRef<PixelValue[][]>([]);
+  const activeLayerPixelsRef = useRef(activeLayerPixels);
+  const compositePixelsRef = useRef(compositePixels);
+  const layersRef = useRef(layers);
+  const undoStackRef = useRef<LayerSnapshot[]>([]);
+  const redoStackRef = useRef<LayerSnapshot[]>([]);
   const actionInProgressRef = useRef(false);
   const actionModifiedRef = useRef(false);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -89,6 +189,50 @@ export function PixelPencil() {
   const [availableWidth, setAvailableWidth] = useState<number>(0);
   const [availableHeight, setAvailableHeight] = useState<number>(0);
   const prevDimensionsRef = useRef({ width: gridWidth, height: gridHeight });
+  const setActiveLayerPixels = useCallback(
+    (
+      next:
+        | PixelValue[]
+        | ((previous: PixelValue[]) => PixelValue[] | PixelValue[]),
+    ) => {
+      const previousPixels = activeLayerPixelsRef.current;
+      const resolvedPixels =
+        typeof next === "function"
+          ? (next as (prev: PixelValue[]) => PixelValue[])(previousPixels)
+          : next;
+      if (
+        previousPixels === resolvedPixels ||
+        (previousPixels &&
+          resolvedPixels &&
+          arePixelsEqual(previousPixels, resolvedPixels))
+      ) {
+        return;
+      }
+
+      activeLayerPixelsRef.current = resolvedPixels;
+      setActiveLayerPixelsState(resolvedPixels);
+      setLayers((prevLayers) => {
+        const index = prevLayers.findIndex(
+          (layer) => layer.id === activeLayerId,
+        );
+        if (index === -1) {
+          return prevLayers;
+        }
+        const targetLayer = prevLayers[index];
+        if (targetLayer.pixels === resolvedPixels) {
+          return prevLayers;
+        }
+        const updatedLayers = [...prevLayers];
+        updatedLayers[index] = {
+          ...targetLayer,
+          pixels: resolvedPixels,
+        };
+        layersRef.current = updatedLayers;
+        return updatedLayers;
+      });
+    },
+    [activeLayerId],
+  );
   const currentPalette = useMemo(() => {
     const found = PALETTE_THEMES.find((theme) => theme.id === paletteThemeId);
     return found ?? PALETTE_THEMES[0];
@@ -134,7 +278,7 @@ export function PixelPencil() {
   } = usePixelExport({
     gridWidth,
     gridHeight,
-    pixels,
+    pixels: compositePixels,
     indexToCoords,
   });
 
@@ -177,28 +321,70 @@ export function PixelPencil() {
   }, [zoomScale, gridWidth, gridHeight, baseCellSize]);
 
   useEffect(() => {
-    pixelsRef.current = pixels;
-  }, [gridHeight, gridWidth, indexToCoords, pixels]);
+    activeLayerPixelsRef.current = activeLayerPixels;
+  }, [activeLayerPixels]);
+
+  useEffect(() => {
+    layersRef.current = layers;
+  }, [layers]);
+
+  useEffect(() => {
+    const currentLayer = layers.find((layer) => layer.id === activeLayerId);
+    if (!currentLayer) return;
+    const currentPixels = activeLayerPixelsRef.current;
+    if (
+      currentPixels === currentLayer.pixels ||
+      !currentPixels ||
+      !arePixelsEqual(currentPixels, currentLayer.pixels)
+    ) {
+      const cloned = currentLayer.pixels.slice();
+      activeLayerPixelsRef.current = cloned;
+      setActiveLayerPixelsState(cloned);
+    }
+  }, [activeLayerId, layers]);
+
+  useEffect(() => {
+    const composed = composeLayers(layers, totalCells);
+    compositePixelsRef.current = composed;
+    setCompositePixels(composed);
+  }, [layers, totalCells]);
 
   useEffect(() => {
     const prev = prevDimensionsRef.current;
     if (prev.width === gridWidth && prev.height === gridHeight) {
       return;
     }
-    setPixels((prevPixels) => {
-      const next = new Array(totalCells).fill(null) as PixelValue[];
-      const copyWidth = Math.min(prev.width, gridWidth);
-      const copyHeight = Math.min(prev.height, gridHeight);
-      for (let y = 0; y < copyHeight; y += 1) {
-        for (let x = 0; x < copyWidth; x += 1) {
-          const oldIndex = y * prev.width + x;
-          const newIndex = y * gridWidth + x;
-          next[newIndex] = prevPixels[oldIndex] ?? null;
+
+    const copyWidth = Math.min(prev.width, gridWidth);
+    const copyHeight = Math.min(prev.height, gridHeight);
+
+    setLayers((prevLayers) => {
+      const nextLayers = prevLayers.map((layer) => {
+        const nextPixels = new Array(totalCells).fill(null) as PixelValue[];
+        for (let y = 0; y < copyHeight; y += 1) {
+          for (let x = 0; x < copyWidth; x += 1) {
+            const oldIndex = y * prev.width + x;
+            const newIndex = y * gridWidth + x;
+            nextPixels[newIndex] = layer.pixels[oldIndex] ?? null;
+          }
         }
+        return {
+          ...layer,
+          pixels: nextPixels,
+        };
+      });
+      layersRef.current = nextLayers;
+      const activeLayer = nextLayers.find(
+        (layer) => layer.id === activeLayerId,
+      );
+      if (activeLayer) {
+        const cloned = activeLayer.pixels.slice();
+        activeLayerPixelsRef.current = cloned;
+        setActiveLayerPixelsState(cloned);
       }
-      pixelsRef.current = next;
-      return next;
+      return nextLayers;
     });
+
     prevDimensionsRef.current = { width: gridWidth, height: gridHeight };
     undoStackRef.current = [];
     redoStackRef.current = [];
@@ -207,7 +393,15 @@ export function PixelPencil() {
     setCanUndo(false);
     setCanRedo(false);
     setHoverIndex(null);
-  }, [gridHeight, gridWidth, setCanRedo, setCanUndo, setHoverIndex, totalCells]);
+  }, [
+    activeLayerId,
+    gridHeight,
+    gridWidth,
+    setCanRedo,
+    setCanUndo,
+    setHoverIndex,
+    totalCells,
+  ]);
 
   useEffect(() => {
     const baseDimension = 32;
@@ -310,11 +504,43 @@ export function PixelPencil() {
 
 
 
+  const applySnapshot = useCallback(
+    (snapshot: LayerSnapshot) => {
+      const restoredLayers = cloneLayers(snapshot.layers, totalCells);
+      layersRef.current = restoredLayers;
+      setLayers(restoredLayers);
+      const nextActiveId = restoredLayers.some(
+        (layer) => layer.id === snapshot.activeLayerId,
+      )
+        ? snapshot.activeLayerId
+        : restoredLayers[restoredLayers.length - 1]?.id;
+      if (nextActiveId) {
+        setActiveLayerId(nextActiveId);
+      }
+      const targetLayer = restoredLayers.find(
+        (layer) => layer.id === (nextActiveId ?? snapshot.activeLayerId),
+      );
+      if (targetLayer) {
+        const cloned = targetLayer.pixels.slice();
+        activeLayerPixelsRef.current = cloned;
+        setActiveLayerPixelsState(cloned);
+      }
+    },
+    [setActiveLayerPixelsState, totalCells],
+  );
+
   const recordSnapshot = useCallback(() => {
-    const snapshot = [...pixelsRef.current];
     const undoStack = undoStackRef.current;
+    const snapshot: LayerSnapshot = {
+      layers: cloneLayers(layersRef.current, totalCells),
+      activeLayerId,
+    };
     const lastSnapshot = undoStack[undoStack.length - 1];
-    if (lastSnapshot && arePixelsEqual(lastSnapshot, snapshot)) {
+    if (
+      lastSnapshot &&
+      lastSnapshot.activeLayerId === snapshot.activeLayerId &&
+      areLayersEqual(lastSnapshot.layers, snapshot.layers)
+    ) {
       return;
     }
     if (undoStack.length === MAX_HISTORY) {
@@ -322,7 +548,7 @@ export function PixelPencil() {
     }
     undoStack.push(snapshot);
     updateHistoryState();
-  }, [updateHistoryState]);
+  }, [activeLayerId, totalCells, updateHistoryState]);
 
   const beginAction = useCallback(() => {
     if (actionInProgressRef.current) return;
@@ -337,13 +563,21 @@ export function PixelPencil() {
     if (!actionInProgressRef.current) return;
     const undoStack = undoStackRef.current;
     const lastSnapshot = undoStack[undoStack.length - 1];
-    if (lastSnapshot && arePixelsEqual(lastSnapshot, pixelsRef.current)) {
+    const currentState: LayerSnapshot = {
+      layers: cloneLayers(layersRef.current, totalCells),
+      activeLayerId,
+    };
+    if (
+      lastSnapshot &&
+      lastSnapshot.activeLayerId === currentState.activeLayerId &&
+      areLayersEqual(lastSnapshot.layers, currentState.layers)
+    ) {
       undoStack.pop();
     }
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [updateHistoryState]);
+  }, [activeLayerId, totalCells, updateHistoryState]);
 
   const undo = useCallback(() => {
     if (actionInProgressRef.current) return;
@@ -351,19 +585,20 @@ export function PixelPencil() {
     if (!undoStack.length) return;
     const previous = undoStack.pop();
     if (!previous) return;
-    const currentSnapshot = [...pixelsRef.current];
+    const currentSnapshot: LayerSnapshot = {
+      layers: cloneLayers(layersRef.current, totalCells),
+      activeLayerId,
+    };
     if (redoStackRef.current.length === MAX_HISTORY) {
       redoStackRef.current.shift();
     }
     redoStackRef.current.push(currentSnapshot);
-    const restored = previous.slice();
-    pixelsRef.current = restored;
-    setPixels(restored);
+    applySnapshot(previous);
     setHoverIndex(null);
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [setPixels, updateHistoryState]);
+  }, [activeLayerId, applySnapshot, setHoverIndex, totalCells, updateHistoryState]);
 
   const redo = useCallback(() => {
     if (actionInProgressRef.current) return;
@@ -371,20 +606,21 @@ export function PixelPencil() {
     if (!redoStack.length) return;
     const next = redoStack.pop();
     if (!next) return;
-    const currentSnapshot = [...pixelsRef.current];
+    const currentSnapshot: LayerSnapshot = {
+      layers: cloneLayers(layersRef.current, totalCells),
+      activeLayerId,
+    };
     const undoStack = undoStackRef.current;
     if (undoStack.length === MAX_HISTORY) {
       undoStack.shift();
     }
     undoStack.push(currentSnapshot);
-    const restored = next.slice();
-    pixelsRef.current = restored;
-    setPixels(restored);
+    applySnapshot(next);
     setHoverIndex(null);
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [setPixels, updateHistoryState]);
+  }, [activeLayerId, applySnapshot, setHoverIndex, totalCells, updateHistoryState]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -476,7 +712,7 @@ export function PixelPencil() {
       if (indices.length === 0) return;
 
       let changed = false;
-      setPixels((prev) => {
+      setActiveLayerPixels((prev) => {
         const next = [...prev];
 
         for (const target of indices) {
@@ -489,7 +725,6 @@ export function PixelPencil() {
           return prev;
         }
 
-        pixelsRef.current = next;
         return next;
       });
 
@@ -497,13 +732,13 @@ export function PixelPencil() {
         actionModifiedRef.current = true;
       }
     },
-    [computeBrushIndices],
+    [computeBrushIndices, setActiveLayerPixels],
   );
 
   const applyLinePath = useCallback(
     (path: number[], value: PixelValue) => {
       if (!path.length) return;
-      const current = pixelsRef.current;
+      const current = activeLayerPixelsRef.current;
       const next = [...current];
       let changed = false;
 
@@ -520,11 +755,10 @@ export function PixelPencil() {
         return;
       }
 
-      pixelsRef.current = next;
       actionModifiedRef.current = true;
-      setPixels(next);
+      setActiveLayerPixels(next);
     },
-    [computeBrushIndices, setPixels],
+    [computeBrushIndices, setActiveLayerPixels],
   );
 
   const buildLinePreview = useCallback(
@@ -743,6 +977,116 @@ export function PixelPencil() {
     [coordsToIndex, gridHeight, gridWidth, indexToCoords, isInBounds],
   );
 
+  const handleCreateLayer = useCallback(() => {
+    recordSnapshot();
+    redoStackRef.current = [];
+    const newLayer: Layer = {
+      id: createLayerId(),
+      name: generateLayerName(layersRef.current),
+      pixels: new Array(totalCells).fill(null) as PixelValue[],
+      visible: true,
+    };
+    const nextLayers = [...layersRef.current, newLayer];
+    layersRef.current = nextLayers;
+    setLayers(nextLayers);
+    setActiveLayerId(newLayer.id);
+    setPathPreview(null);
+    setHoverIndex(null);
+    actionModifiedRef.current = false;
+    actionInProgressRef.current = false;
+    updateHistoryState();
+  }, [recordSnapshot, setHoverIndex, totalCells, updateHistoryState, setPathPreview]);
+
+  const handleDeleteLayer = useCallback(
+    (layerId: string) => {
+      const currentLayers = layersRef.current;
+      if (currentLayers.length <= 1) {
+        return;
+      }
+      if (!currentLayers.some((layer) => layer.id === layerId)) {
+        return;
+      }
+      recordSnapshot();
+      redoStackRef.current = [];
+      const nextLayers = currentLayers.filter((layer) => layer.id !== layerId);
+      if (!nextLayers.length) return;
+      layersRef.current = nextLayers;
+      let nextActiveId = activeLayerId;
+      if (
+        layerId === activeLayerId ||
+        !nextLayers.some((layer) => layer.id === activeLayerId)
+      ) {
+        nextActiveId = nextLayers[nextLayers.length - 1].id;
+      }
+      setLayers(nextLayers);
+      setActiveLayerId(nextActiveId);
+      setPathPreview(null);
+      setHoverIndex(null);
+      actionModifiedRef.current = false;
+      actionInProgressRef.current = false;
+      updateHistoryState();
+    },
+    [activeLayerId, recordSnapshot, setHoverIndex, setPathPreview, updateHistoryState],
+  );
+
+  const handleToggleLayerVisibility = useCallback(
+    (layerId: string) => {
+      if (!layersRef.current.some((layer) => layer.id === layerId)) {
+        return;
+      }
+      recordSnapshot();
+      redoStackRef.current = [];
+      const nextLayers = layersRef.current.map((layer) =>
+        layer.id === layerId ? { ...layer, visible: !layer.visible } : layer,
+      );
+      layersRef.current = nextLayers;
+      setLayers(nextLayers);
+      actionModifiedRef.current = false;
+      actionInProgressRef.current = false;
+      updateHistoryState();
+    },
+    [recordSnapshot, updateHistoryState],
+  );
+
+  const handleReorderLayers = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      const currentLayers = layersRef.current;
+      if (
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= currentLayers.length ||
+        toIndex >= currentLayers.length
+      ) {
+        return;
+      }
+      recordSnapshot();
+      redoStackRef.current = [];
+      const nextLayers = [...currentLayers];
+      const [moved] = nextLayers.splice(fromIndex, 1);
+      nextLayers.splice(toIndex, 0, moved);
+      layersRef.current = nextLayers;
+      setLayers(nextLayers);
+      actionModifiedRef.current = false;
+      actionInProgressRef.current = false;
+      updateHistoryState();
+    },
+    [recordSnapshot, updateHistoryState],
+  );
+
+  const handleSelectLayer = useCallback(
+    (layerId: string) => {
+      if (layerId === activeLayerId) return;
+      if (!layersRef.current.some((layer) => layer.id === layerId)) {
+        return;
+      }
+      setActiveLayerId(layerId);
+      setPathPreview(null);
+      setHoverIndex(null);
+    },
+    [activeLayerId, setHoverIndex],
+  );
+
   const continueStroke = useCallback(
     (index: number) => {
       if (!isDrawingRef.current) return;
@@ -777,7 +1121,7 @@ export function PixelPencil() {
 
   const floodFill = useCallback((startIndex: number, fillValue: PixelValue) => {
     let changed = false;
-    setPixels((prev) => {
+    setActiveLayerPixels((prev) => {
       const targetValue = prev[startIndex];
       if (targetValue === fillValue) {
         return prev;
@@ -816,14 +1160,13 @@ export function PixelPencil() {
         return prev;
       }
 
-      pixelsRef.current = next;
       return next;
     });
 
     if (changed) {
       actionModifiedRef.current = true;
     }
-  }, [coordsToIndex, indexToCoords, isInBounds]);
+  }, [coordsToIndex, indexToCoords, isInBounds, setActiveLayerPixels]);
 
   useEffect(() => {
     const handlePointerUp = () => {
@@ -890,7 +1233,7 @@ export function PixelPencil() {
       }
 
       if (tool === "picker") {
-        const currentPixels = pixelsRef.current;
+        const currentPixels = compositePixelsRef.current;
         const value = currentPixels[index];
         const pickedColor: PaletteColor =
           value === null ? "transparent" : (value as PaletteColor);
@@ -1072,12 +1415,13 @@ export function PixelPencil() {
         const eventIndex = resolveIndexFromPointerEvent(event);
         const endIndex = eventIndex ?? hoverIndex ?? dragStartIndex;
         if (dragStartIndex !== null && endIndex !== null) {
-          const path = tool === "line"
-            ? computeLineIndices(dragStartIndex, endIndex)
-            : computeShapeCells(dragStartIndex, endIndex, shapeType, shapeFilled);
-          const before = pixelsRef.current.slice();
+          const path =
+            tool === "line"
+              ? computeLineIndices(dragStartIndex, endIndex)
+              : computeShapeCells(dragStartIndex, endIndex, shapeType, shapeFilled);
+          const before = activeLayerPixelsRef.current.slice();
           applyLinePath(path, drawValueRef.current);
-          const after = pixelsRef.current;
+          const after = activeLayerPixelsRef.current;
           if (!arePixelsEqual(before, after)) {
             actionModifiedRef.current = true;
           }
@@ -1123,7 +1467,7 @@ export function PixelPencil() {
   // Render matrix once so React keys stay stable.
   const bucketPreview = useMemo(() => {
     if (!previewToolEffects || hoverIndex === null || tool !== "bucket") return null;
-    const targetColor = pixels[hoverIndex];
+    const targetColor = activeLayerPixels[hoverIndex];
     if (targetColor === undefined) return null;
 
     const visited = new Set<number>();
@@ -1135,7 +1479,7 @@ export function PixelPencil() {
       if (index === undefined || visited.has(index)) continue;
       visited.add(index);
 
-      if (pixels[index] !== targetColor) continue;
+      if (activeLayerPixels[index] !== targetColor) continue;
 
       region.add(index);
 
@@ -1155,7 +1499,7 @@ export function PixelPencil() {
     }
 
     return region;
-  }, [coordsToIndex, hoverIndex, indexToCoords, isInBounds, pixels, previewToolEffects, tool]);
+  }, [activeLayerPixels, coordsToIndex, hoverIndex, indexToCoords, isInBounds, previewToolEffects, tool]);
 
   const brushPreview = useMemo(() => {
     if (
@@ -1169,19 +1513,33 @@ export function PixelPencil() {
   }, [computeBrushIndices, hoverIndex, previewToolEffects, tool]);
 
   const reset = useCallback(() => {
-    const current = pixelsRef.current;
-    const isAlreadyEmpty = current.every((value) => value === null);
+    const isAlreadyEmpty = compositePixelsRef.current.every(
+      (value) => value === null,
+    );
     if (isAlreadyEmpty) return;
     recordSnapshot();
     redoStackRef.current = [];
-    const cleared = new Array(totalCells).fill(null) as PixelValue[];
-    pixelsRef.current = cleared;
-    setPixels(cleared);
+    setLayers((prevLayers) => {
+      const clearedLayers = prevLayers.map((layer) => ({
+        ...layer,
+        pixels: new Array(totalCells).fill(null) as PixelValue[],
+      }));
+      layersRef.current = clearedLayers;
+      const activeLayer = clearedLayers.find(
+        (layer) => layer.id === activeLayerId,
+      );
+      if (activeLayer) {
+        const cloned = activeLayer.pixels.slice();
+        activeLayerPixelsRef.current = cloned;
+        setActiveLayerPixelsState(cloned);
+      }
+      return clearedLayers;
+    });
     setHoverIndex(null);
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [recordSnapshot, setPixels, totalCells, updateHistoryState]);
+  }, [activeLayerId, recordSnapshot, setActiveLayerPixelsState, setHoverIndex, totalCells, updateHistoryState]);
 
 
 
@@ -1304,7 +1662,7 @@ export function PixelPencil() {
             zoomScale={zoomScale}
             gridWrapperRef={gridWrapperRef}
             gridRef={gridRef}
-            pixels={pixels}
+            pixels={compositePixels}
             indexToCoords={indexToCoords}
             showPixelGrid={showPixelGrid}
             previewToolEffects={previewToolEffects}
@@ -1371,26 +1729,37 @@ export function PixelPencil() {
           </div>
         </div>
         <aside className="w-full h-full lg:max-w-xs xl:max-w-sm">
-          <ToolSettingsPanel
-            currentTool={currentTool}
-            brushSize={brushSize}
-            onBrushSizeChange={setBrushSize}
-            brushShape={brushShape}
-            onBrushShapeChange={setBrushShape}
-            shapeType={shapeType}
-            onShapeTypeChange={setShapeType}
-            shapeFilled={shapeFilled}
-            onShapeFilledChange={setShapeFilled}
-            zoomMode={zoomMode}
-            onZoomModeChange={setZoomMode}
-            paletteThemeId={paletteThemeId}
-            setPaletteThemeId={setPaletteThemeId}
-            currentPalette={currentPalette}
-            drawValueRef={drawValueRef}
-            setActiveColor={setActiveColor}
-            paletteColors={paletteColors}
-            selectedColorStyles={selectedColorStyles}
-          />
+          <div className="flex h-full flex-col gap-4">
+            <LayersPanel
+              layers={layers}
+              activeLayerId={activeLayerId}
+              onSelectLayer={handleSelectLayer}
+              onCreateLayer={handleCreateLayer}
+              onDeleteLayer={handleDeleteLayer}
+              onToggleVisibility={handleToggleLayerVisibility}
+              onReorderLayers={handleReorderLayers}
+            />
+            <ToolSettingsPanel
+              currentTool={currentTool}
+              brushSize={brushSize}
+              onBrushSizeChange={setBrushSize}
+              brushShape={brushShape}
+              onBrushShapeChange={setBrushShape}
+              shapeType={shapeType}
+              onShapeTypeChange={setShapeType}
+              shapeFilled={shapeFilled}
+              onShapeFilledChange={setShapeFilled}
+              zoomMode={zoomMode}
+              onZoomModeChange={setZoomMode}
+              paletteThemeId={paletteThemeId}
+              setPaletteThemeId={setPaletteThemeId}
+              currentPalette={currentPalette}
+              drawValueRef={drawValueRef}
+              setActiveColor={setActiveColor}
+              paletteColors={paletteColors}
+              selectedColorStyles={selectedColorStyles}
+            />
+          </div>
         </aside>
       </div>
       <PixelPencilModals
