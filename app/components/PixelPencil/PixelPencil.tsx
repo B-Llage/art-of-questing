@@ -63,6 +63,7 @@ export function PixelPencil() {
   const [shapeType, setShapeType] = useState<ShapeKind>("square");
   const [shapeFilled, setShapeFilled] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [lastPointedIndex, setLastPointedIndex] = useState<number | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
@@ -540,16 +541,6 @@ export function PixelPencil() {
     [computeBrushIndices],
   );
 
-  const startStroke = useCallback(
-    (index: number, nextValue: PixelValue) => {
-      isDrawingRef.current = true;
-      drawValueRef.current = nextValue;
-      lastPaintedIndexRef.current = index;
-      applyBrush(index, drawValueRef.current);
-    },
-    [applyBrush],
-  );
-
   const computeLineIndices = useCallback(
     (startIndex: number, endIndex: number) => {
       if (startIndex === endIndex) {
@@ -588,6 +579,60 @@ export function PixelPencil() {
       return result;
     },
     [coordsToIndex, indexToCoords, isInBounds],
+  );
+
+  const updateShiftLinePreview = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>, targetIndex: number | null) => {
+      const supportsShiftLine = tool === "pencil" || tool === "eraser";
+      const clearPreview = () =>
+        setPathPreview((prev) => (prev === null ? prev : null));
+
+      if (!supportsShiftLine) {
+        clearPreview();
+        return;
+      }
+
+      if (isDrawingRef.current || !previewToolEffects) {
+        if (!isDrawingRef.current) {
+          clearPreview();
+        }
+        return;
+      }
+
+      if (!event.shiftKey || lastPointedIndex === null || targetIndex === null) {
+        clearPreview();
+        return;
+      }
+
+      const isErase =
+        tool === "eraser" ||
+        event.altKey ||
+        event.metaKey ||
+        event.ctrlKey ||
+        (typeof event.buttons === "number" && (event.buttons & 2) === 2);
+
+      drawValueRef.current = isErase ? null : activeColor;
+      const path = computeLineIndices(lastPointedIndex, targetIndex);
+      setPathPreview(buildLinePreview(path));
+    },
+    [
+      activeColor,
+      buildLinePreview,
+      computeLineIndices,
+      lastPointedIndex,
+      previewToolEffects,
+      tool,
+    ],
+  );
+
+  const startStroke = useCallback(
+    (index: number, nextValue: PixelValue) => {
+      isDrawingRef.current = true;
+      drawValueRef.current = nextValue;
+      lastPaintedIndexRef.current = index;
+      applyBrush(index, drawValueRef.current);
+    },
+    [applyBrush],
   );
 
   const computeShapeCells = useCallback(
@@ -887,6 +932,17 @@ export function PixelPencil() {
         return;
       }
 
+      if (event.shiftKey && lastPointedIndex !== null) {
+        const line = computeLineIndices(lastPointedIndex, index);
+        for (let position = 1; position < line.length; position += 1) {
+          applyBrush(line[position], strokeColor);
+        }
+        drawValueRef.current = strokeColor;
+        lastPaintedIndexRef.current = index;
+        setPathPreview(null);
+        return;
+      }
+
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
         activePointerIdRef.current = event.pointerId;
@@ -903,6 +959,7 @@ export function PixelPencil() {
       computeLineIndices,
       computeShapeCells,
       floodFill,
+      lastPointedIndex,
       previewToolEffects,
       shapeFilled,
       shapeType,
@@ -916,7 +973,10 @@ export function PixelPencil() {
   const handlePointerEnter = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>, index: number) => {
       setHoverIndex(index);
-      if (!isDrawingRef.current) return;
+      if (!isDrawingRef.current) {
+        updateShiftLinePreview(event, index);
+        return;
+      }
       event.preventDefault();
       if (tool === "line" || tool === "shape") {
         if (dragStartIndex === null) return;
@@ -941,21 +1001,27 @@ export function PixelPencil() {
       shapeFilled,
       shapeType,
       tool,
+      updateShiftLinePreview,
     ],
   );
 
   const handlePointerMove = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
-      if (!isDrawingRef.current) return;
+      const index = resolveIndexFromPointerEvent(event);
+      if (!isDrawingRef.current) {
+        setHoverIndex(index ?? null);
+        updateShiftLinePreview(event, index);
+        return;
+      }
       if (
         activePointerIdRef.current !== null &&
         event.pointerId !== activePointerIdRef.current
       ) {
         return;
       }
+
       if (tool === "line" || tool === "shape") {
         if (dragStartIndex === null) return;
-        const index = resolveIndexFromPointerEvent(event);
         if (index === null) return;
         event.preventDefault();
         setHoverIndex(index);
@@ -969,7 +1035,6 @@ export function PixelPencil() {
         return;
       }
 
-      const index = resolveIndexFromPointerEvent(event);
       if (index === null) return;
       event.preventDefault();
       setHoverIndex(index);
@@ -979,13 +1044,14 @@ export function PixelPencil() {
       buildLinePreview,
       computeLineIndices,
       computeShapeCells,
-      dragStartIndex,
       continueStroke,
+      dragStartIndex,
       previewToolEffects,
       resolveIndexFromPointerEvent,
       shapeFilled,
       shapeType,
       tool,
+      updateShiftLinePreview,
     ],
   );
 
@@ -999,6 +1065,8 @@ export function PixelPencil() {
         stopStroke();
         setHoverIndex(null);
       };
+      const pointerUpIndex = resolveIndexFromPointerEvent(event);
+      setLastPointedIndex(pointerUpIndex ?? hoverIndex ?? lastPointedIndex);
 
       if (wasDragAction) {
         const eventIndex = resolveIndexFromPointerEvent(event);
@@ -1034,6 +1102,7 @@ export function PixelPencil() {
       computeShapeCells,
       hoverIndex,
       dragStartIndex,
+      lastPointedIndex,
       resolveIndexFromPointerEvent,
       shapeFilled,
       shapeType,
@@ -1045,7 +1114,7 @@ export function PixelPencil() {
   const handlePointerLeave = useCallback(() => {
     if (!isDrawingRef.current) {
       setHoverIndex(null);
-      if (tool === "line" || tool === "shape") {
+      if (tool === "line" || tool === "shape" || tool === "pencil" || tool === "eraser") {
         setPathPreview(null);
       }
     }
