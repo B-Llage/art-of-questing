@@ -163,6 +163,9 @@ export function PixelPencil() {
   const [shapeType, setShapeType] = useState<ShapeKind>("square");
   const [shapeFilled, setShapeFilled] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const setHoverIndexIfChanged = useCallback((next: number | null) => {
+    setHoverIndex((prev) => (prev === next ? prev : next));
+  }, []);
   const [lastPointedIndex, setLastPointedIndex] = useState<number | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -189,17 +192,19 @@ export function PixelPencil() {
   const actionInProgressRef = useRef(false);
   const actionModifiedRef = useRef(false);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
-  const wrapperSizeRef = useRef({ scrollWidth: 0, scrollHeight: 0 });
   const wrapperParentWidthRef = useRef<number | null>(null);
   const wrapperParentHeightRef = useRef<number | null>(null);
-  const gridRef = useRef<HTMLDivElement | null>(null);
+  const gridRef = useRef<HTMLCanvasElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const pointerQueueRef = useRef<{ x: number; y: number }[]>([]);
   const pointerRAFRef = useRef<number | null>(null);
+  const zoomFocusIndexRef = useRef<number | null>(null);
   const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
   const [pathPreview, setPathPreview] = useState<Set<number> | null>(null);
   const [availableWidth, setAvailableWidth] = useState<number>(0);
   const [availableHeight, setAvailableHeight] = useState<number>(0);
+  const [canvasScroll, setCanvasScroll] = useState({ x: 0, y: 0 });
+  const [canvasViewport, setCanvasViewport] = useState({ width: 0, height: 0 });
   const prevDimensionsRef = useRef({ width: gridWidth, height: gridHeight });
   const [isMobile, setIsMobile] = useState(false);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
@@ -436,26 +441,99 @@ export function PixelPencil() {
     () => baseCellSize * zoomScale,
     [baseCellSize, zoomScale],
   );
-  const GRID_PADDING = 16;
+  const contentWidth = gridWidth * displayCellSize;
+  const contentHeight = gridHeight * displayCellSize;
+  const renderOffsetX =
+    canvasViewport.width > 0 && contentWidth > 0 && contentWidth <= canvasViewport.width
+      ? (canvasViewport.width - contentWidth) / 2
+      : 0;
+  const renderOffsetY =
+    canvasViewport.height > 0 && contentHeight > 0 && contentHeight <= canvasViewport.height
+      ? (canvasViewport.height - contentHeight) / 2
+      : 0;
+  const scrollOriginX = contentWidth <= canvasViewport.width ? 0 : canvasScroll.x;
+  const scrollOriginY = contentHeight <= canvasViewport.height ? 0 : canvasScroll.y;
+
+  const setCanvasScrollClamped = useCallback(
+    (
+      next:
+        | { x: number; y: number }
+        | ((previous: { x: number; y: number }) => { x: number; y: number }),
+    ) => {
+      setCanvasScroll((prev) => {
+        const resolved =
+          typeof next === "function" ? next(prev) : (next as { x: number; y: number });
+        const maxX = Math.max(
+          0,
+          gridWidth * displayCellSize - canvasViewport.width,
+        );
+        const maxY = Math.max(
+          0,
+          gridHeight * displayCellSize - canvasViewport.height,
+        );
+        const nextX =
+          maxX === 0 ? 0 : Math.min(Math.max(0, resolved.x ?? 0), maxX);
+        const nextY =
+          maxY === 0 ? 0 : Math.min(Math.max(0, resolved.y ?? 0), maxY);
+        if (prev.x === nextX && prev.y === nextY) {
+          return prev;
+        }
+        return { x: nextX, y: nextY };
+      });
+    },
+    [canvasViewport.height, canvasViewport.width, displayCellSize, gridHeight, gridWidth],
+  );
+
+  const handleViewportResize = useCallback((size: { width: number; height: number }) => {
+    setCanvasViewport((prev) =>
+      prev.width === size.width && prev.height === size.height ? prev : size,
+    );
+  }, []);
+
+  const centerPixelInView = useCallback(
+    (index: number) => {
+      if (displayCellSize <= 0 || gridWidth <= 0 || gridHeight <= 0) return;
+      if (canvasViewport.width <= 0 || canvasViewport.height <= 0) return;
+      if (index < 0 || index >= gridWidth * gridHeight) return;
+      setCanvasScrollClamped(() => {
+        const x = index % gridWidth;
+        const y = Math.floor(index / gridWidth);
+        const targetX =
+          x * displayCellSize + displayCellSize / 2 - canvasViewport.width / 2;
+        const targetY =
+          y * displayCellSize + displayCellSize / 2 - canvasViewport.height / 2;
+        return { x: targetX, y: targetY };
+      });
+    },
+    [
+      canvasViewport.height,
+      canvasViewport.width,
+      displayCellSize,
+      gridHeight,
+      gridWidth,
+      setCanvasScrollClamped,
+    ],
+  );
 
   useLayoutEffect(() => {
-    const wrapper = gridWrapperRef.current;
-    if (!wrapper) return;
+    if (zoomFocusIndexRef.current === null) {
+      return;
+    }
+    const targetIndex = zoomFocusIndexRef.current;
+    zoomFocusIndexRef.current = null;
+    centerPixelInView(targetIndex);
+  }, [centerPixelInView, displayCellSize]);
 
-    const update = () => {
-      wrapperSizeRef.current = {
-        scrollWidth: wrapper.scrollWidth,
-        scrollHeight: wrapper.scrollHeight,
-      };
-    };
-
-    update();
-
-    const resizeObserver = new ResizeObserver(update);
-    resizeObserver.observe(wrapper);
-
-    return () => resizeObserver.disconnect();
-  }, [zoomScale, gridWidth, gridHeight, baseCellSize]);
+  useEffect(() => {
+    setCanvasScrollClamped((previous) => previous);
+  }, [
+    canvasViewport.height,
+    canvasViewport.width,
+    displayCellSize,
+    gridHeight,
+    gridWidth,
+    setCanvasScrollClamped,
+  ]);
 
   useEffect(() => {
     activeLayerPixelsRef.current = activeLayerPixels;
@@ -529,14 +607,14 @@ export function PixelPencil() {
     actionInProgressRef.current = false;
     setCanUndo(false);
     setCanRedo(false);
-    setHoverIndex(null);
+    setHoverIndexIfChanged(null);
   }, [
     activeLayerId,
     gridHeight,
     gridWidth,
     setCanRedo,
     setCanUndo,
-    setHoverIndex,
+    setHoverIndexIfChanged,
     totalCells,
   ]);
 
@@ -576,37 +654,11 @@ export function PixelPencil() {
         wrapper.parentElement?.clientHeight ?? measuredHeight;
       const previousParentHeight = wrapperParentHeightRef.current;
 
-      setAvailableWidth((prev) => {
-        if (prev === 0) {
-          return measuredWidth;
-        }
-
-        if (
-          previousParentWidth !== null &&
-          parentWidth < previousParentWidth - 1
-        ) {
-          return measuredWidth;
-        }
-
-        return measuredWidth > prev ? measuredWidth : prev;
-      });
+      setAvailableWidth(parentWidth);
 
       wrapperParentWidthRef.current = parentWidth;
 
-      setAvailableHeight((prev) => {
-        if (prev === 0) {
-          return measuredHeight;
-        }
-
-        if (
-          previousParentHeight !== null &&
-          parentHeight < previousParentHeight - 1
-        ) {
-          return measuredHeight;
-        }
-
-        return measuredHeight > prev ? measuredHeight : prev;
-      });
+      setAvailableHeight(parentHeight);
 
       wrapperParentHeightRef.current = parentHeight;
     };
@@ -731,11 +783,11 @@ export function PixelPencil() {
     }
     redoStackRef.current.push(currentSnapshot);
     applySnapshot(previous);
-    setHoverIndex(null);
+    setHoverIndexIfChanged(null);
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [activeLayerId, applySnapshot, setHoverIndex, totalCells, updateHistoryState]);
+  }, [activeLayerId, applySnapshot, setHoverIndexIfChanged, totalCells, updateHistoryState]);
 
   const redo = useCallback(() => {
     if (actionInProgressRef.current) return;
@@ -753,11 +805,11 @@ export function PixelPencil() {
     }
     undoStack.push(currentSnapshot);
     applySnapshot(next);
-    setHoverIndex(null);
+    setHoverIndexIfChanged(null);
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [activeLayerId, applySnapshot, setHoverIndex, totalCells, updateHistoryState]);
+  }, [activeLayerId, applySnapshot, setHoverIndexIfChanged, totalCells, updateHistoryState]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1129,11 +1181,11 @@ export function PixelPencil() {
     setLayers(nextLayers);
     setActiveLayerId(newLayer.id);
     setPathPreview(null);
-    setHoverIndex(null);
+    setHoverIndexIfChanged(null);
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [recordSnapshot, setHoverIndex, totalCells, updateHistoryState, setPathPreview]);
+  }, [recordSnapshot, setHoverIndexIfChanged, totalCells, updateHistoryState, setPathPreview]);
 
   const handleDeleteLayer = useCallback(
     (layerId: string) => {
@@ -1159,12 +1211,12 @@ export function PixelPencil() {
       setLayers(nextLayers);
       setActiveLayerId(nextActiveId);
       setPathPreview(null);
-      setHoverIndex(null);
+      setHoverIndexIfChanged(null);
       actionModifiedRef.current = false;
       actionInProgressRef.current = false;
       updateHistoryState();
     },
-    [activeLayerId, recordSnapshot, setHoverIndex, setPathPreview, updateHistoryState],
+    [activeLayerId, recordSnapshot, setHoverIndexIfChanged, setPathPreview, updateHistoryState],
   );
 
   const handleToggleLayerVisibility = useCallback(
@@ -1220,9 +1272,9 @@ export function PixelPencil() {
       }
       setActiveLayerId(layerId);
       setPathPreview(null);
-      setHoverIndex(null);
+      setHoverIndexIfChanged(null);
     },
-    [activeLayerId, setHoverIndex],
+    [activeLayerId, setHoverIndexIfChanged],
   );
 
   const continueStroke = useCallback(
@@ -1328,15 +1380,39 @@ export function PixelPencil() {
     (clientX: number, clientY: number) => {
       if (!gridRef.current || displayCellSize <= 0) return null;
       const rect = gridRef.current.getBoundingClientRect();
-      const paddingOffset = GRID_PADDING / 2;
-      const x = (clientX - rect.left - paddingOffset) / displayCellSize;
-      const y = (clientY - rect.top - paddingOffset) / displayCellSize;
-      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      const relativeX = clientX - rect.left;
+      const relativeY = clientY - rect.top;
+      if (!Number.isFinite(relativeX) || !Number.isFinite(relativeY)) {
         return null;
       }
-      return { x, y };
+      const contentMinX = renderOffsetX;
+      const contentMinY = renderOffsetY;
+      const contentMaxX = renderOffsetX + contentWidth;
+      const contentMaxY = renderOffsetY + contentHeight;
+      if (
+        relativeX < contentMinX ||
+        relativeY < contentMinY ||
+        relativeX > contentMaxX ||
+        relativeY > contentMaxY
+      ) {
+        return null;
+      }
+      const worldX = scrollOriginX + (relativeX - renderOffsetX);
+      const worldY = scrollOriginY + (relativeY - renderOffsetY);
+      return {
+        x: worldX / displayCellSize,
+        y: worldY / displayCellSize,
+      };
     },
-    [displayCellSize],
+    [
+      contentHeight,
+      contentWidth,
+      displayCellSize,
+      renderOffsetX,
+      renderOffsetY,
+      scrollOriginX,
+      scrollOriginY,
+    ],
   );
 
   const resolveIndexFromClientPoint = useCallback(
@@ -1372,12 +1448,12 @@ export function PixelPencil() {
       lastIndex = index;
     }
     if (lastIndex !== null) {
-      setHoverIndex(lastIndex);
+      setHoverIndexIfChanged(lastIndex);
     }
     if (pointerQueueRef.current.length) {
       pointerRAFRef.current = window.requestAnimationFrame(flushPointerQueue);
     }
-  }, [continueStroke, resolveIndexFromClientPoint, setHoverIndex]);
+  }, [continueStroke, resolveIndexFromClientPoint, setHoverIndexIfChanged]);
 
   const enqueuePointerPosition = useCallback(
     (clientX: number, clientY: number) => {
@@ -1433,7 +1509,7 @@ export function PixelPencil() {
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>, index: number) => {
       event.preventDefault();
-      setHoverIndex(index);
+      setHoverIndexIfChanged(index);
       pointerQueueRef.current.length = 0;
       if (pointerRAFRef.current !== null) {
         window.cancelAnimationFrame(pointerRAFRef.current);
@@ -1442,20 +1518,8 @@ export function PixelPencil() {
 
       if (tool === "magnifier") {
         const direction = event.shiftKey ? "out" : zoomMode;
+        zoomFocusIndexRef.current = index;
         applyZoom(direction);
-
-        const { x, y } = indexToCoords(index);
-        requestAnimationFrame(() => {
-          const wrapper = gridWrapperRef.current;
-          if (!wrapper) return;
-
-          const width = wrapper.scrollWidth;
-          const height = wrapper.scrollHeight;
-          gridWrapperRef.current?.scrollTo({
-            left: ((width/gridWidth)) * x,
-            top: ((height/gridHeight)) * y,
-          });
-        });
         return;
       }
 
@@ -1543,7 +1607,7 @@ export function PixelPencil() {
 
   const handlePointerEnter = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>, index: number) => {
-      setHoverIndex(index);
+      setHoverIndexIfChanged(index);
       if (!isDrawingRef.current) {
         updateShiftLinePreview(event, index);
         return;
@@ -1592,7 +1656,7 @@ export function PixelPencil() {
           lastSample.clientX,
           lastSample.clientY,
         );
-        setHoverIndex(index ?? null);
+        setHoverIndexIfChanged(index ?? null);
         updateShiftLinePreview(event, index);
         return;
       }
@@ -1616,7 +1680,7 @@ export function PixelPencil() {
         }
         if (lastIndex === null) return;
         event.preventDefault();
-        setHoverIndex(lastIndex);
+        setHoverIndexIfChanged(lastIndex);
         if (previewToolEffects) {
           const path =
             tool === "line"
@@ -1658,7 +1722,7 @@ export function PixelPencil() {
       const releasePointer = typeof event.currentTarget.hasPointerCapture === "function" && event.currentTarget.hasPointerCapture(event.pointerId);
       const finalize = () => {
         stopStroke();
-        setHoverIndex(null);
+        setHoverIndexIfChanged(null);
       };
       const pointerUpIndex = resolveIndexFromPointerEvent(event);
       setLastPointedIndex(pointerUpIndex ?? hoverIndex ?? lastPointedIndex);
@@ -1709,7 +1773,7 @@ export function PixelPencil() {
 
   const handlePointerLeave = useCallback(() => {
     if (!isDrawingRef.current) {
-      setHoverIndex(null);
+      setHoverIndexIfChanged(null);
       if (tool === "line" || tool === "shape" || tool === "pencil" || tool === "eraser") {
         setPathPreview(null);
       }
@@ -1787,11 +1851,11 @@ export function PixelPencil() {
       }
       return clearedLayers;
     });
-    setHoverIndex(null);
+    setHoverIndexIfChanged(null);
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [activeLayerId, recordSnapshot, setActiveLayerPixelsState, setHoverIndex, totalCells, updateHistoryState]);
+  }, [activeLayerId, recordSnapshot, setActiveLayerPixelsState, setHoverIndexIfChanged, totalCells, updateHistoryState]);
 
 
 
@@ -1937,22 +2001,24 @@ export function PixelPencil() {
                   gridWrapperRef={gridWrapperRef}
                   gridRef={gridRef}
                   pixels={compositePixels}
-                  indexToCoords={indexToCoords}
                   showPixelGrid={showPixelGrid}
                   previewToolEffects={previewToolEffects}
                   bucketPreview={bucketPreview}
                   brushPreview={brushPreview}
                   pathPreview={pathPreview}
-                  drawValueRef={drawValueRef}
-                  drawValueVersion={drawValueVersion}
-                  tool={tool}
-                  wrapperMaxWidth={availableWidth}
-                  wrapperMaxHeight={availableHeight}
-                  handlePointerDown={handlePointerDown}
-                  handlePointerEnter={handlePointerEnter}
-                  handlePointerMove={handlePointerMove}
-                  handlePointerUp={handlePointerUp}
-                  handlePointerLeave={handlePointerLeave}
+                drawValueRef={drawValueRef}
+                drawValueVersion={drawValueVersion}
+                tool={tool}
+                wrapperMaxWidth={availableWidth}
+                wrapperMaxHeight={availableHeight}
+                canvasScroll={canvasScroll}
+                onScrollChange={setCanvasScrollClamped}
+                onViewportResize={handleViewportResize}
+                handlePointerDown={handlePointerDown}
+                handlePointerEnter={handlePointerEnter}
+                handlePointerMove={handlePointerMove}
+                handlePointerUp={handlePointerUp}
+                handlePointerLeave={handlePointerLeave}
                 />
               </div>
             </div>
