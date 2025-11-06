@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { PaletteTheme } from "../../PixelPencilTypes";
+import { PaletteColor, PaletteTheme, PixelValue } from "../../PixelPencilTypes";
 import { PixelPencilPalettes } from "../../PixelPencilPalettes";
-import { PaletteColor, PixelValue } from "../../PixelPencil";
 
 const PALETTE_THEMES: readonly PaletteTheme[] = PixelPencilPalettes;
 interface PaletteColorSelectorProps {

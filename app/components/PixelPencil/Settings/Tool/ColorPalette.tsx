@@ -1,5 +1,5 @@
 import { RefObject, useMemo } from "react";
-import { PixelValue } from "../../PixelPencil";
+import { PixelValue } from "../../PixelPencilTypes";
 
 interface PaletteProps {
     paletteColors: string[];
