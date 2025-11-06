@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
-import { BrushShape } from "../../PixelPencil";
+import { BrushShape } from "../../PixelPencilTypes";
+
 
 interface BrushShapeOption {
     id: BrushShape;
