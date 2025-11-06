@@ -172,6 +172,14 @@ export function PixelPencil() {
   const { zoomScale, zoomMode, setZoomMode, applyZoom } = useZoomControls();
   const isDrawingRef = useRef(false);
   const drawValueRef = useRef<PixelValue>(PALETTE_THEMES[0].colors[0]);
+  const [drawValueVersion, setDrawValueVersion] = useState(0);
+  const setDrawValue = useCallback((value: PixelValue) => {
+    if (drawValueRef.current === value) {
+      return;
+    }
+    drawValueRef.current = value;
+    setDrawValueVersion((prev) => prev + 1);
+  }, []);
   const lastPaintedIndexRef = useRef<number | null>(null);
   const activeLayerPixelsRef = useRef(activeLayerPixels);
   const compositePixelsRef = useRef(compositePixels);
@@ -945,7 +953,7 @@ export function PixelPencil() {
   );
 
   const updateShiftLinePreview = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>, targetIndex: number | null) => {
+    (event: ReactPointerEvent<HTMLCanvasElement>, targetIndex: number | null) => {
       const supportsShiftLine = tool === "pencil" || tool === "eraser";
       const clearPreview = () =>
         setPathPreview((prev) => (prev === null ? prev : null));
@@ -974,7 +982,7 @@ export function PixelPencil() {
         event.ctrlKey ||
         (typeof event.buttons === "number" && (event.buttons & 2) === 2);
 
-      drawValueRef.current = isErase ? null : activeColor;
+      setDrawValue(isErase ? null : activeColor);
       const path = computeLineIndices(lastPointedIndex, targetIndex);
       setPathPreview(buildLinePreview(path));
     },
@@ -984,6 +992,7 @@ export function PixelPencil() {
       computeLineIndices,
       lastPointedIndex,
       previewToolEffects,
+      setDrawValue,
       tool,
     ],
   );
@@ -991,11 +1000,11 @@ export function PixelPencil() {
   const startStroke = useCallback(
     (index: number, nextValue: PixelValue) => {
       isDrawingRef.current = true;
-      drawValueRef.current = nextValue;
+      setDrawValue(nextValue);
       lastPaintedIndexRef.current = index;
       applyBrush(index, drawValueRef.current);
     },
-    [applyBrush],
+    [applyBrush, setDrawValue],
   );
 
   const computeShapeCells = useCallback(
@@ -1422,7 +1431,7 @@ export function PixelPencil() {
   }, [processDrawingSamples, tool]);
 
   const handlePointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>, index: number) => {
+    (event: ReactPointerEvent<HTMLCanvasElement>, index: number) => {
       event.preventDefault();
       setHoverIndex(index);
       pointerQueueRef.current.length = 0;
@@ -1456,7 +1465,7 @@ export function PixelPencil() {
         const pickedColor: PaletteColor =
           value === null ? "transparent" : (value as PaletteColor);
         setActiveColor(pickedColor);
-        drawValueRef.current = pickedColor;
+        setDrawValue(pickedColor);
         return;
       }
 
@@ -1478,7 +1487,7 @@ export function PixelPencil() {
           activePointerIdRef.current = event.pointerId;
         }
         isDrawingRef.current = true;
-        drawValueRef.current = strokeColor;
+        setDrawValue(strokeColor);
         lastPaintedIndexRef.current = null;
         setDragStartIndex(index);
         if (previewToolEffects) {
@@ -1498,7 +1507,7 @@ export function PixelPencil() {
         for (let position = 1; position < line.length; position += 1) {
           applyBrush(line[position], strokeColor);
         }
-        drawValueRef.current = strokeColor;
+        setDrawValue(strokeColor);
         lastPaintedIndexRef.current = index;
         setPathPreview(null);
         return;
@@ -1525,6 +1534,7 @@ export function PixelPencil() {
       shapeFilled,
       shapeType,
       startStroke,
+      setDrawValue,
       tool,
       applyZoom,
       zoomMode,
@@ -1532,7 +1542,7 @@ export function PixelPencil() {
   );
 
   const handlePointerEnter = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>, index: number) => {
+    (event: ReactPointerEvent<HTMLCanvasElement>, index: number) => {
       setHoverIndex(index);
       if (!isDrawingRef.current) {
         updateShiftLinePreview(event, index);
@@ -1567,7 +1577,7 @@ export function PixelPencil() {
   );
 
   const handlePointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>) => {
+    (event: ReactPointerEvent<HTMLCanvasElement>) => {
       const nativeEvent = event.nativeEvent;
       const coalesced =
         typeof nativeEvent.getCoalescedEvents === "function"
@@ -1641,7 +1651,7 @@ export function PixelPencil() {
   );
 
   const handlePointerUp = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>) => {
+    (event: ReactPointerEvent<HTMLCanvasElement>) => {
       event.preventDefault();
       const wasDragAction = tool === "line" || tool === "shape";
       const capturedPointer = activePointerIdRef.current;
@@ -1934,6 +1944,7 @@ export function PixelPencil() {
                   brushPreview={brushPreview}
                   pathPreview={pathPreview}
                   drawValueRef={drawValueRef}
+                  drawValueVersion={drawValueVersion}
                   tool={tool}
                   wrapperMaxWidth={availableWidth}
                   wrapperMaxHeight={availableHeight}
