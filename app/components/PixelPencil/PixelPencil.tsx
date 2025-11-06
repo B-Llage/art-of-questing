@@ -217,25 +217,25 @@ export function PixelPencil() {
 
       activeLayerPixelsRef.current = resolvedPixels;
       setActiveLayerPixelsState(resolvedPixels);
-      setLayers((prevLayers) => {
-        const index = prevLayers.findIndex(
-          (layer) => layer.id === activeLayerId,
-        );
-        if (index === -1) {
-          return prevLayers;
-        }
-        const targetLayer = prevLayers[index];
-        if (targetLayer.pixels === resolvedPixels) {
-          return prevLayers;
-        }
-        const updatedLayers = [...prevLayers];
-        updatedLayers[index] = {
-          ...targetLayer,
-          pixels: resolvedPixels,
-        };
-        layersRef.current = updatedLayers;
-        return updatedLayers;
-      });
+
+      const currentLayers = layersRef.current;
+      const index = currentLayers.findIndex(
+        (layer) => layer.id === activeLayerId,
+      );
+      if (index === -1) {
+        return;
+      }
+      const targetLayer = currentLayers[index];
+      if (targetLayer.pixels === resolvedPixels) {
+        return;
+      }
+      const updatedLayers = [...currentLayers];
+      updatedLayers[index] = {
+        ...targetLayer,
+        pixels: resolvedPixels,
+      };
+      layersRef.current = updatedLayers;
+      setLayers(updatedLayers);
     },
     [activeLayerId],
   );
@@ -1394,6 +1394,9 @@ export function PixelPencil() {
     if (typeof window === "undefined") return undefined;
     const handleGlobalPointerMove = (event: PointerEvent) => {
       if (!isDrawingRef.current) return;
+      if (tool === "line" || tool === "shape") {
+        return;
+      }
       if (
         activePointerIdRef.current !== null &&
         event.pointerId !== activePointerIdRef.current
@@ -1416,7 +1419,7 @@ export function PixelPencil() {
     return () => {
       window.removeEventListener("pointermove", handleGlobalPointerMove);
     };
-  }, [processDrawingSamples]);
+  }, [processDrawingSamples, tool]);
 
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>, index: number) => {
