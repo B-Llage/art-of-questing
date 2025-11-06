@@ -1,10 +1,10 @@
-import { CSSProperties, Dispatch, MutableRefObject, SetStateAction } from "react";
+import { Dispatch, MutableRefObject, SetStateAction } from "react";
 
 import { BrushShapeSelector } from "./Settings/Tool/BrushShapeSelector";
 import { BrushSizeSelector } from "./Settings/Tool/BrushSizeSelector";
 import { ColorPalette } from "./Settings/Tool/ColorPalette";
 import { PaletteThemeSelector } from "./Settings/Tool/PaletteThemeSelector";
-import { SelectedColor } from "./Settings/Tool/SelectedColor";
+import { SelectedColor, SelectedColorStyles } from "./Settings/Tool/SelectedColor";
 import { ShapeSelector } from "./Settings/Tool/ShapeSelector";
 import { ZoomModeSelector } from "./Settings/Tool/ZoomModeSelector";
 import { BRUSH_SHAPES, BRUSH_SIZES, SHAPE_TYPES } from "./PixelPencil.constants";
@@ -29,7 +29,7 @@ interface ToolSettingsPanelProps {
   drawValueRef: MutableRefObject<PixelValue>;
   setActiveColor: Dispatch<SetStateAction<PaletteColor>>;
   paletteColors: PaletteColor[];
-  selectedColorStyles: CSSProperties;
+  selectedColorStyles: SelectedColorStyles;
 }
 
 export function ToolSettingsPanel({
@@ -62,7 +62,10 @@ export function ToolSettingsPanel({
         <BrushSizeSelector
           options={BRUSH_SIZES}
           value={brushSize}
-          onChange={onBrushSizeChange}
+          onChange={(value) => {
+            const newSize = typeof value === 'function' ? value(brushSize) : value;
+            onBrushSizeChange(newSize);
+          }}
         />
       )}
 
@@ -70,7 +73,10 @@ export function ToolSettingsPanel({
         <BrushShapeSelector
           options={BRUSH_SHAPES}
           value={brushShape}
-          onChange={onBrushShapeChange}
+          onChange={(value) => {
+            const newShape = typeof value === 'function' ? value(brushShape) : value;
+            onBrushShapeChange(newShape);
+          }}
         />
       )}
 
@@ -78,7 +84,10 @@ export function ToolSettingsPanel({
         <ShapeSelector
           options={SHAPE_TYPES}
           value={shapeType}
-          onChange={onShapeTypeChange}
+          onChange={(value) => {
+            const newShape = typeof value === 'function' ? value(shapeType) : value;
+            onShapeTypeChange(newShape);
+          }}
         />
       )}
 

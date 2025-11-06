@@ -1,4 +1,4 @@
-interface SelectedColorStyles {
+export interface SelectedColorStyles {
     backgroundColor: string;
     backgroundImage?: string;
     backgroundSize?: string;
