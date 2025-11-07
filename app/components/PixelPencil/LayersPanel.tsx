@@ -137,7 +137,7 @@ export function LayersPanel({
             onDragLeave={(event) => handleDragLeave(event, layer.id)}
             onDrop={(event) => handleDrop(event, layer.id)}
             onDragEnd={handleDragEnd}
-            className={`flex items-center gap-3 rounded-md border px-3 py-2 text-sm transition-colors ${
+            className={`flex items-center gap-3 rounded-md border px-2 py-2 text-sm transition-colors ${
               isActive
                 ? "border-zinc-400 bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800"
                 : "border-zinc-200 bg-white hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"

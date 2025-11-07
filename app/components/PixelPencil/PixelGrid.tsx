@@ -83,6 +83,9 @@ export function PixelGrid({
 }: PixelGridProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hoverIndexRef = useRef<number | null>(null);
+  const scrollLockRef = useRef<{ locked: boolean; previousOverflow: string }>(
+    { locked: false, previousOverflow: "" },
+  );
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
 
   const contentWidth = Math.max(0, gridWidth * displayCellSize);
@@ -109,6 +112,23 @@ export function PixelGrid({
     },
     [gridRef],
   );
+
+  const lockBodyScroll = useCallback(() => {
+    if (typeof document === "undefined") return;
+    if (scrollLockRef.current.locked) return;
+    scrollLockRef.current = {
+      locked: true,
+      previousOverflow: document.body.style.overflow,
+    };
+    document.body.style.overflow = "hidden";
+  }, []);
+
+  const unlockBodyScroll = useCallback(() => {
+    if (typeof document === "undefined") return;
+    if (!scrollLockRef.current.locked) return;
+    document.body.style.overflow = scrollLockRef.current.previousOverflow;
+    scrollLockRef.current = { locked: false, previousOverflow: "" };
+  }, []);
 
   useEffect(() => {
     const wrapper = gridWrapperRef.current;
@@ -346,16 +366,20 @@ export function PixelGrid({
 
   const handleCanvasPointerEnter = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>) => {
+      lockBodyScroll();
       const index = resolveCellIndex(event);
       emitPointerEnter(event, index);
     },
-    [emitPointerEnter, resolveCellIndex],
+    [emitPointerEnter, lockBodyScroll, resolveCellIndex],
   );
 
   const handleCanvasPointerLeave = useCallback(() => {
+    unlockBodyScroll();
     hoverIndexRef.current = null;
     handlePointerLeave();
-  }, [handlePointerLeave]);
+  }, [handlePointerLeave, unlockBodyScroll]);
+
+  useEffect(() => () => unlockBodyScroll(), [unlockBodyScroll]);
 
   const handleCanvasWheel = useCallback(
     (event: ReactWheelEvent<HTMLCanvasElement>) => {
