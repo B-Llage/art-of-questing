@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import {
   GRID_DIMENSION_OPTIONS,
   usePixelPencilSettings,
-} from "../PixelPencilSettingsContext";
+} from "../context/PixelPencilSettingsContext";
 
 
 interface SettingsModalProps {

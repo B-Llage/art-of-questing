@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { EXPORT_SCALES } from "../PixelPencil.constants";
 
@@ -21,7 +21,6 @@ export function usePixelExport({
   const [exportScale, setExportScale] =
     useState<(typeof EXPORT_SCALES)[number]>(1);
   const [exportFilename, setExportFilename] = useState("pixel-art");
-  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
 
   const createExportCanvas = useCallback(
     (scale: number) => {
@@ -53,7 +52,6 @@ export function usePixelExport({
   );
 
   const open = useCallback(() => {
-    setPreviewDataUrl(null);
     setIsOpen(true);
   }, []);
 
@@ -82,18 +80,15 @@ export function usePixelExport({
     setIsOpen(false);
   }, [createExportCanvas, exportFilename, exportScale]);
 
-  useEffect(() => {
+  const previewDataUrl = useMemo(() => {
     if (!isOpen) {
-      setPreviewDataUrl(null);
-      return;
+      return null;
     }
     const canvas = createExportCanvas(exportScale);
     if (!canvas) {
-      setPreviewDataUrl(null);
-      return;
+      return null;
     }
-    const dataUrl = canvas.toDataURL("image/png");
-    setPreviewDataUrl(dataUrl);
+    return canvas.toDataURL("image/png");
   }, [createExportCanvas, exportScale, isOpen]);
 
   return {

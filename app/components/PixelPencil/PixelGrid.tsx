@@ -21,7 +21,6 @@ interface PixelGridProps {
   gridWidth: number;
   gridHeight: number;
   displayCellSize: number;
-  zoomScale: number;
   gridWrapperRef: MutableRefObject<HTMLDivElement | null>;
   gridRef: MutableRefObject<HTMLCanvasElement | null>;
   pixels: PixelValue[];
@@ -50,15 +49,16 @@ interface PixelGridProps {
   handlePointerUp: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
   handlePointerLeave: () => void;
 }
-
-const WRAPPER_PADDING = 24;
-const MIN_SCROLLBAR_SIZE = 32;
+const MIN_SCROLLBAR_SIZE = 24;
+const VERTICAL_TRACK_MARGIN = 37;
+const HORIZONTAL_TRACK_MARGIN = 37;
+const VERTICAL_HANDLE_PADDING = 0;
+const HORIZONTAL_HANDLE_PADDING = 0;
 
 export function PixelGrid({
   gridWidth,
   gridHeight,
   displayCellSize,
-  zoomScale,
   gridWrapperRef,
   gridRef,
   pixels,
@@ -116,11 +116,11 @@ export function PixelGrid({
     const updateViewport = () => {
       const width = Math.max(
         0,
-        wrapper.clientWidth - WRAPPER_PADDING * 2,
+        wrapper.clientWidth,
       );
       const height = Math.max(
         0,
-        wrapper.clientHeight - WRAPPER_PADDING * 2,
+        wrapper.clientHeight,
       );
       setViewport((prev) =>
         prev.width === width && prev.height === height ? prev : { width, height },
@@ -295,6 +295,8 @@ export function PixelGrid({
       return cellY * gridWidth + cellX;
     },
     [
+      contentHeight,
+      contentWidth,
       displayCellSize,
       gridHeight,
       gridWidth,
@@ -365,28 +367,46 @@ export function PixelGrid({
     [canvasScroll.x, canvasScroll.y, onScrollChange],
   );
 
+  const verticalTrackLength = Math.max(
+    0,
+    viewport.height - VERTICAL_TRACK_MARGIN,
+  );
+  const horizontalTrackLength = Math.max(
+    0,
+    viewport.width - HORIZONTAL_TRACK_MARGIN,
+  );
+
   const verticalHandleSize = useMemo(() => {
-    if (maxScrollY <= 0 || viewport.height <= 0) return 0;
+    if (maxScrollY <= 0 || verticalTrackLength <= 0) return 0;
     const ratio = viewport.height / contentHeight;
-    return Math.max(MIN_SCROLLBAR_SIZE, ratio * viewport.height);
-  }, [contentHeight, maxScrollY, viewport.height]);
+    const desired = ratio * verticalTrackLength;
+    const maxSize = Math.max(0, verticalTrackLength - VERTICAL_HANDLE_PADDING * 2);
+    return Math.min(maxSize, Math.max(MIN_SCROLLBAR_SIZE, desired));
+  }, [contentHeight, maxScrollY, verticalTrackLength, viewport.height]);
 
   const horizontalHandleSize = useMemo(() => {
-    if (maxScrollX <= 0 || viewport.width <= 0) return 0;
+    if (maxScrollX <= 0 || horizontalTrackLength <= 0) return 0;
     const ratio = viewport.width / contentWidth;
-    return Math.max(MIN_SCROLLBAR_SIZE, ratio * viewport.width);
-  }, [contentWidth, maxScrollX, viewport.width]);
+    const desired = ratio * horizontalTrackLength;
+    const maxSize = Math.max(0, horizontalTrackLength - HORIZONTAL_HANDLE_PADDING * 2);
+    return Math.min(maxSize, Math.max(MIN_SCROLLBAR_SIZE, desired));
+  }, [contentWidth, horizontalTrackLength, maxScrollX, viewport.width]);
 
   const verticalHandleOffset =
-    maxScrollY <= 0 || viewport.height <= 0
+    maxScrollY <= 0 || verticalTrackLength <= 0
       ? 0
-      : (canvasScroll.y / maxScrollY) *
-        Math.max(1, viewport.height - verticalHandleSize);
+      : VERTICAL_HANDLE_PADDING +
+        (canvasScroll.y / maxScrollY) *
+          Math.max(1, verticalTrackLength - verticalHandleSize - VERTICAL_HANDLE_PADDING * 2);
   const horizontalHandleOffset =
-    maxScrollX <= 0 || viewport.width <= 0
+    maxScrollX <= 0 || horizontalTrackLength <= 0
       ? 0
-      : (canvasScroll.x / maxScrollX) *
-        Math.max(1, viewport.width - horizontalHandleSize);
+      : HORIZONTAL_HANDLE_PADDING +
+        (canvasScroll.x / maxScrollX) *
+          Math.max(
+            1,
+            horizontalTrackLength - horizontalHandleSize - HORIZONTAL_HANDLE_PADDING * 2,
+          );
 
   const handleScrollbarPointerDown = useCallback(
     (
@@ -402,7 +422,9 @@ export function PixelGrid({
       const handleSize =
         orientation === "vertical" ? verticalHandleSize : horizontalHandleSize;
       const viewportLength =
-        orientation === "vertical" ? viewport.height : viewport.width;
+        orientation === "vertical"
+          ? verticalTrackLength
+          : horizontalTrackLength;
       const maxScroll = orientation === "vertical" ? maxScrollY : maxScrollX;
       if (maxScroll <= 0 || viewportLength <= 0) {
         return;
@@ -433,12 +455,12 @@ export function PixelGrid({
       canvasScroll.x,
       canvasScroll.y,
       horizontalHandleSize,
+      horizontalTrackLength,
       maxScrollX,
       maxScrollY,
       onScrollChange,
       verticalHandleSize,
-      viewport.height,
-      viewport.width,
+      verticalTrackLength,
     ],
   );
 
@@ -447,7 +469,6 @@ export function PixelGrid({
       ref={gridWrapperRef}
       className="relative flex h-full w-full min-h-0 touch-none overflow-hidden"
       style={{
-        padding: `${WRAPPER_PADDING}px`,
         boxSizing: "border-box",
         maxWidth: wrapperMaxWidth > 0 ? `${wrapperMaxWidth}px` : undefined,
         width: "100%",
@@ -475,9 +496,9 @@ export function PixelGrid({
         />
 
         {maxScrollY > 0 && verticalHandleSize > 0 && (
-          <div className="absolute right-2 top-2 bottom-6 w-3 rounded-full bg-zinc-200/60 dark:bg-zinc-800/60">
+          <div className="absolute border-2 border-stone-950 right-2 top-2 bottom-6 w-3 rounded-full bg-zinc-200/60 dark:bg-stone-950">
             <div
-              className="absolute left-0 right-0 cursor-pointer rounded-full bg-zinc-500 dark:bg-zinc-300"
+              className="absolute left-0 right-0 cursor-pointer rounded-full bg-zinc-500 dark:bg-slate-300"
               style={{
                 height: `${verticalHandleSize}px`,
                 transform: `translateY(${verticalHandleOffset}px)`,
@@ -489,9 +510,9 @@ export function PixelGrid({
           </div>
         )}
         {maxScrollX > 0 && horizontalHandleSize > 0 && (
-          <div className="absolute left-2 right-6 bottom-2 h-3 rounded-full bg-zinc-200/60 dark:bg-zinc-800/60">
+          <div className="absolute border-2 border-stone-950 left-2 right-6 bottom-2 h-3 rounded-full bg-zinc-200/60 dark:bg-stone-950">
             <div
-              className="absolute top-0 bottom-0 cursor-pointer rounded-full bg-zinc-500 dark:bg-zinc-300"
+              className="absolute top-0 bottom-0 cursor-pointer rounded-full bg-black-500 dark:bg-slate-300"
               style={{
                 width: `${horizontalHandleSize}px`,
                 transform: `translateX(${horizontalHandleOffset}px)`,

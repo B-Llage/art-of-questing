@@ -154,10 +154,10 @@ const NESPalette: PaletteTheme =
     ],
 };
 
-const VirtualBoyPalette: PaletteTheme =
+const RetroFuturePalette: PaletteTheme =
 {
-    id: "virtualboy",
-    name: "Virtual Boy",
+    id: "retrofuture",
+    name: "Retro Future",
     colors: [
       "#050005",
       "#10000f",
@@ -187,5 +187,5 @@ export const PixelPencilPalettes: PaletteTheme[] = [
     IcePalette,
     GameBoyPalette,
     NESPalette,
-    VirtualBoyPalette,
+    RetroFuturePalette,
 ];

@@ -33,7 +33,7 @@ export function ColorPalette({ paletteColors, setActiveColor, drawValueRef }: Pa
                     />
                 );
             }),
-        [paletteColors],
+        [paletteColors, setActiveColor, drawValueRef],
     );
 
     return (

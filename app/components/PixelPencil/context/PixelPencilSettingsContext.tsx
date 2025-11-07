@@ -11,7 +11,7 @@ import {
 } from "react";
 
 type CanvasPixelSizeOption = 8 | 13 | 16 | 19 | 32;
-type GridDimensionOption = 16 | 32 | 64 | 128;
+type GridDimensionOption = 16 | 32 | 64 | 128 | 256;
 
 interface PixelPencilSettingsContextValue {
   previewToolEffects: boolean;
@@ -36,7 +36,7 @@ export function PixelPencilSettingsProvider({
 }) {
   const [previewToolEffects, setPreviewToolEffects] = useState(true);
   const [canvasPixelSize, setCanvasPixelSize] =
-    useState<CanvasPixelSizeOption>(16);
+    useState<CanvasPixelSizeOption>(8);
   const [gridWidth, setGridWidth] = useState<GridDimensionOption>(32);
   const [gridHeight, setGridHeight] = useState<GridDimensionOption>(32);
   const [showPixelGrid, setShowPixelGrid] = useState(false);
@@ -93,4 +93,5 @@ export const GRID_DIMENSION_OPTIONS: ReadonlyArray<GridDimensionOption> = [
   32,
   64,
   128,
+  256
 ] as const;

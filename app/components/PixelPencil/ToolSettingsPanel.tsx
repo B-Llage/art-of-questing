@@ -53,81 +53,82 @@ export function ToolSettingsPanel({
   selectedColorStyles,
 }: ToolSettingsPanelProps) {
   return (
-    <div className="flex flex-col h-full gap-5 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-      <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+    <div className="flex h-full max-h-full flex-col gap-4 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+      <span className="text-xs font-semibold uppercase tracking-wide text-zinc-900 dark:text-zinc-50">
         Tool Settings
       </span>
-
-      {currentTool.settings.brushSize && (
-        <BrushSizeSelector
-          options={BRUSH_SIZES}
-          value={brushSize}
-          onChange={(value) => {
-            const newSize = typeof value === 'function' ? value(brushSize) : value;
-            onBrushSizeChange(newSize);
-          }}
-        />
-      )}
-
-      {currentTool.settings.brushShape && (
-        <BrushShapeSelector
-          options={BRUSH_SHAPES}
-          value={brushShape}
-          onChange={(value) => {
-            const newShape = typeof value === 'function' ? value(brushShape) : value;
-            onBrushShapeChange(newShape);
-          }}
-        />
-      )}
-
-      {currentTool.settings.shapeType && (
-        <ShapeSelector
-          options={SHAPE_TYPES}
-          value={shapeType}
-          onChange={(value) => {
-            const newShape = typeof value === 'function' ? value(shapeType) : value;
-            onShapeTypeChange(newShape);
-          }}
-        />
-      )}
-
-      {currentTool.settings.shapeFilled && (
-        <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-          <span className="font-medium">Filled Shape</span>
-          <input
-            type="checkbox"
-            checked={shapeFilled}
-            onChange={(event) => onShapeFilledChange(event.target.checked)}
-            className="h-4 w-4 rounded border-zinc-300 text-black focus:ring-black dark:border-zinc-600 dark:text-white dark:focus:ring-white"
+      <div className="flex-1 min-h-0 space-y-4 overflow-auto pr-1">
+        {currentTool.settings.brushSize && (
+          <BrushSizeSelector
+            options={BRUSH_SIZES}
+            value={brushSize}
+            onChange={(value) => {
+              const newSize = typeof value === "function" ? value(brushSize) : value;
+              onBrushSizeChange(newSize);
+            }}
           />
-        </label>
-      )}
+        )}
 
-      {currentTool.settings.zoomMode && (
-        <ZoomModeSelector value={zoomMode} onChange={onZoomModeChange} />
-      )}
+        {currentTool.settings.brushShape && (
+          <BrushShapeSelector
+            options={BRUSH_SHAPES}
+            value={brushShape}
+            onChange={(value) => {
+              const newShape = typeof value === "function" ? value(brushShape) : value;
+              onBrushShapeChange(newShape);
+            }}
+          />
+        )}
 
-      {currentTool.settings.paletteTheme && (
-        <PaletteThemeSelector
-          paletteThemeId={paletteThemeId}
-          currentPalette={currentPalette}
-          drawValueRef={drawValueRef}
-          setPaletteThemeId={setPaletteThemeId}
-          setActiveColor={setActiveColor}
-        />
-      )}
+        {currentTool.settings.shapeType && (
+          <ShapeSelector
+            options={SHAPE_TYPES}
+            value={shapeType}
+            onChange={(value) => {
+              const newShape = typeof value === "function" ? value(shapeType) : value;
+              onShapeTypeChange(newShape);
+            }}
+          />
+        )}
 
-      {currentTool.settings.palette && (
-        <ColorPalette
-          paletteColors={paletteColors}
-          setActiveColor={setActiveColor}
-          drawValueRef={drawValueRef}
-        />
-      )}
+        {currentTool.settings.shapeFilled && (
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+            <span className="font-medium uppercase">Filled Shape</span>
+            <input
+              type="checkbox"
+              checked={shapeFilled}
+              onChange={(event) => onShapeFilledChange(event.target.checked)}
+              className="h-3.5 w-3.5 rounded border-zinc-300 text-black focus:ring-black dark:border-zinc-600 dark:text-white dark:focus:ring-white"
+            />
+          </label>
+        )}
 
-      {currentTool.settings.selectedColor && (
-        <SelectedColor selectedColorStyles={selectedColorStyles} />
-      )}
+        {currentTool.settings.zoomMode && (
+          <ZoomModeSelector value={zoomMode} onChange={onZoomModeChange} />
+        )}
+
+        {currentTool.settings.paletteTheme && (
+          <PaletteThemeSelector
+            paletteThemeId={paletteThemeId}
+            currentPalette={currentPalette}
+            drawValueRef={drawValueRef}
+            setPaletteThemeId={setPaletteThemeId}
+            setActiveColor={setActiveColor}
+          />
+        )}
+
+        {currentTool.settings.palette && (
+          <ColorPalette
+            paletteColors={paletteColors}
+            setActiveColor={setActiveColor}
+            drawValueRef={drawValueRef}
+          />
+        )}
+
+        {currentTool.settings.selectedColor && (
+          <SelectedColor selectedColorStyles={selectedColorStyles} />
+        )}
+      </div>
     </div>
   );
 }
