@@ -6,6 +6,13 @@ interface ChangelogModalProps {
 
 const CHANGELOG_ENTRIES = [
   {
+    version: "v0.2.1",
+    title: "Maintenance Update",
+    changes: [
+      "Updated Next.js and React to the latest stable releases.",
+    ],
+  },
+  {
     version: "v0.2.0",
     title: "PixelPencil Improvements",
     changes: [
