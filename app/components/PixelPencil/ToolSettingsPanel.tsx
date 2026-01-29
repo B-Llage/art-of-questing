@@ -53,7 +53,7 @@ export function ToolSettingsPanel({
   selectedColorStyles,
 }: ToolSettingsPanelProps) {
   return (
-    <div className="flex h-full max-h-full flex-col gap-4 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+    <div className="flex h-full min-h-0 flex-col gap-4 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
       <span className="text-xs font-semibold uppercase tracking-wide text-zinc-900 dark:text-zinc-50">
         Tool Settings
       </span>

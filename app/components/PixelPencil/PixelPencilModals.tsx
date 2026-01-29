@@ -1,6 +1,7 @@
 import { Dispatch, SetStateAction } from "react";
 
 import { ActionRequestModal } from "../shared/ActionRequestModal";
+import { ChangelogModal } from "./Settings/ChangelogModal";
 import { SettingsModal } from "./Settings/SettingsModal";
 import { EXPORT_SCALES } from "./PixelPencil.constants";
 
@@ -22,6 +23,8 @@ interface PixelPencilModalsProps {
   gridHeight: number;
   isSettingsDialogOpen: boolean;
   handleCloseSettingsDialog: () => void;
+  isChangelogDialogOpen: boolean;
+  handleCloseChangelogDialog: () => void;
   isHotkeysDialogOpen: boolean;
   handleCloseHotkeysDialog: () => void;
   hotkeys: HotkeyItem[];
@@ -43,6 +46,8 @@ export function PixelPencilModals({
   gridHeight,
   isSettingsDialogOpen,
   handleCloseSettingsDialog,
+  isChangelogDialogOpen,
+  handleCloseChangelogDialog,
   isHotkeysDialogOpen,
   handleCloseHotkeysDialog,
   hotkeys,
@@ -128,6 +133,12 @@ export function PixelPencilModals({
 
       {isSettingsDialogOpen && (
         <SettingsModal handleCloseSettingsDialog={handleCloseSettingsDialog} />
+      )}
+
+      {isChangelogDialogOpen && (
+        <ChangelogModal
+          handleCloseChangelogDialog={handleCloseChangelogDialog}
+        />
       )}
 
       {isHotkeysDialogOpen && (

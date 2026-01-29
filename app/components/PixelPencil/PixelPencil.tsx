@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { PaintTool, PaletteTheme, BrushShape, PaletteColor, PixelValue, ShapeKind } from "./PixelPencilTypes";
-import { BucketTool, ColorPickerTool, EraserTool, LineTool, MagnifierTool, PencilTool, ShapeTool } from "./PixelPencilTools";
+import { BucketTool, ColorPickerTool, EraserTool, LineTool, MagnifierTool, PencilTool, RectSelectionTool, ShapeTool } from "./PixelPencilTools";
 import { PixelPencilPalettes } from "./PixelPencilPalettes";
 import { CANVAS_PIXEL_SIZE_OPTIONS, usePixelPencilSettings } from "./context/PixelPencilSettingsContext";
 import { MAX_HISTORY } from "./PixelPencil.constants";
@@ -15,8 +15,10 @@ import { ToolSettingsPanel } from "./ToolSettingsPanel";
 import { PixelGrid } from "./PixelGrid";
 import { PixelPencilModals } from "./PixelPencilModals";
 import { LayersPanel } from "./LayersPanel";
+import packageJson from "../../../package.json";
 
 const TOOLS: readonly PaintTool[] = [
+  RectSelectionTool,
   PencilTool,
   EraserTool,
   ColorPickerTool,
@@ -31,6 +33,7 @@ type Tool = (typeof TOOLS)[number]["id"];
 
 const RESAMPLE_STEP = 0.5; // cells
 const MAX_SEGMENT_STEPS = 2048;
+const APP_VERSION = packageJson.version;
 
 
 const arePixelsEqual = (a: PixelValue[], b: PixelValue[]) => {
@@ -53,10 +56,20 @@ type Layer = {
 type LayerSnapshot = {
   layers: Layer[];
   activeLayerId: string;
+  selection: SelectionState | null;
 };
 
 const createLayerId = () =>
   `layer-${Math.random().toString(36).slice(2, 7)}${Date.now().toString(36)}`;
+
+type SelectionRect = { x: number; y: number; width: number; height: number };
+type SelectionPixel = { relX: number; relY: number; color: PixelValue };
+type SelectionState = {
+  rect: SelectionRect;
+  offset: { dx: number; dy: number };
+  pixels: SelectionPixel[];
+  isFloating: boolean;
+};
 
 const cloneLayer = (layer: Layer, totalCells: number): Layer => {
   const pixels = new Array(totalCells).fill(null) as PixelValue[];
@@ -72,6 +85,47 @@ const cloneLayer = (layer: Layer, totalCells: number): Layer => {
 
 const cloneLayers = (layers: Layer[], totalCells: number) =>
   layers.map((layer) => cloneLayer(layer, totalCells));
+
+const cloneSelection = (selection: SelectionState | null): SelectionState | null => {
+  if (!selection) return null;
+  return {
+    rect: { ...selection.rect },
+    offset: { ...selection.offset },
+    pixels: selection.pixels.map((pixel) => ({ ...pixel })),
+    isFloating: selection.isFloating,
+  };
+};
+
+const areSelectionPixelsEqual = (a: SelectionPixel[], b: SelectionPixel[]) => {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    const pixelA = a[index];
+    const pixelB = b[index];
+    if (
+      pixelA.relX !== pixelB.relX ||
+      pixelA.relY !== pixelB.relY ||
+      pixelA.color !== pixelB.color
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const areSelectionsEqual = (a: SelectionState | null, b: SelectionState | null) => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.rect.x === b.rect.x &&
+    a.rect.y === b.rect.y &&
+    a.rect.width === b.rect.width &&
+    a.rect.height === b.rect.height &&
+    a.offset.dx === b.offset.dx &&
+    a.offset.dy === b.offset.dy &&
+    a.isFloating === b.isFloating &&
+    areSelectionPixelsEqual(a.pixels, b.pixels)
+  );
+};
 
 const areLayersEqual = (a: Layer[], b: Layer[]) => {
   if (a.length !== b.length) return false;
@@ -121,6 +175,7 @@ export function PixelPencil() {
     gridWidth,
     gridHeight,
     showPixelGrid,
+    checkerSize,
   } = usePixelPencilSettings();
 
   const totalCells = gridWidth * gridHeight;
@@ -175,6 +230,7 @@ export function PixelPencil() {
   const [canRedo, setCanRedo] = useState(false);
   const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
+  const [isChangelogDialogOpen, setIsChangelogDialogOpen] = useState(false);
   const [isHotkeysDialogOpen, setIsHotkeysDialogOpen] = useState(false);
   const { zoomScale, zoomMode, setZoomMode, applyZoom } = useZoomControls();
   const isDrawingRef = useRef(false);
@@ -205,12 +261,46 @@ export function PixelPencil() {
   const pointerQueueRef = useRef<{ x: number; y: number }[]>([]);
   const pointerRAFRef = useRef<number | null>(null);
   const zoomFocusIndexRef = useRef<number | null>(null);
+  const selectionDraftOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const selectionMoveRef = useRef<
+    | {
+      pointer: { x: number; y: number };
+      startOffset: { dx: number; dy: number };
+    }
+    | null
+  >(null);
+  const selectionLastPointerCellRef = useRef<{ x: number; y: number } | null>(null);
+  const selectionActionActiveRef = useRef(false);
+  const selectionPointerIdRef = useRef<number | null>(null);
   const [dragStartIndex, setDragStartIndex] = useState<number | null>(null);
   const [pathPreview, setPathPreview] = useState<Set<number> | null>(null);
   const [availableWidth, setAvailableWidth] = useState<number>(0);
   const [availableHeight, setAvailableHeight] = useState<number>(0);
   const [canvasScroll, setCanvasScroll] = useState({ x: 0, y: 0 });
   const [canvasViewport, setCanvasViewport] = useState({ width: 0, height: 0 });
+  const selectionRef = useRef<SelectionState | null>(null);
+  const [selection, setSelectionState] = useState<SelectionState | null>(null);
+  const setSelection = useCallback(
+    (
+      value:
+        | SelectionState
+        | null
+        | ((previous: SelectionState | null) => SelectionState | null),
+    ) => {
+      setSelectionState((previous) => {
+        const next =
+          typeof value === "function"
+            ? (value as (prev: SelectionState | null) => SelectionState | null)(
+              previous,
+            )
+            : value;
+        selectionRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
+  const [selectionPreviewRect, setSelectionPreviewRect] = useState<SelectionRect | null>(null);
   const prevDimensionsRef = useRef({ width: gridWidth, height: gridHeight });
   const [isMobile, setIsMobile] = useState(false);
   const [viewportWidth, setViewportWidth] = useState<number | null>(null);
@@ -268,6 +358,290 @@ export function PixelPencil() {
     return found ?? PencilTool;
   }, [tool]);
 
+  const clampCellX = useCallback(
+    (value: number) => Math.max(0, Math.min(gridWidth - 1, value)),
+    [gridWidth],
+  );
+
+  const clampCellY = useCallback(
+    (value: number) => Math.max(0, Math.min(gridHeight - 1, value)),
+    [gridHeight],
+  );
+
+  const normalizeSelectionRect = useCallback(
+    (start: { x: number; y: number }, end: { x: number; y: number }): SelectionRect => {
+      const startX = clampCellX(start.x);
+      const startY = clampCellY(start.y);
+      const endX = clampCellX(end.x);
+      const endY = clampCellY(end.y);
+      const minX = Math.min(startX, endX);
+      const minY = Math.min(startY, endY);
+      const maxX = Math.max(startX, endX);
+      const maxY = Math.max(startY, endY);
+      const width = Math.min(maxX - minX + 1, gridWidth - minX);
+      const height = Math.min(maxY - minY + 1, gridHeight - minY);
+      return {
+        x: minX,
+        y: minY,
+        width: Math.max(1, width),
+        height: Math.max(1, height),
+      };
+    },
+    [clampCellX, clampCellY, gridHeight, gridWidth],
+  );
+
+  const selectionContainsCell = useCallback(
+    (sel: SelectionState, cellX: number, cellY: number) => {
+      const left = sel.rect.x + sel.offset.dx;
+      const top = sel.rect.y + sel.offset.dy;
+      return (
+        cellX >= left &&
+        cellX < left + sel.rect.width &&
+        cellY >= top &&
+        cellY < top + sel.rect.height
+      );
+    },
+    [],
+  );
+
+  const clampSelectionOffset = useCallback(
+    (rect: SelectionRect, desired: { dx: number; dy: number }) => {
+      const minDx = -(rect.x + rect.width - 1);
+      const maxDx = gridWidth - 1 - rect.x;
+      const minDy = -(rect.y + rect.height - 1);
+      const maxDy = gridHeight - 1 - rect.y;
+      return {
+        dx: Math.min(Math.max(desired.dx, minDx), maxDx),
+        dy: Math.min(Math.max(desired.dy, minDy), maxDy),
+      };
+    },
+    [gridHeight, gridWidth],
+  );
+
+  const coordsToIndex = useCallback(
+    (x: number, y: number) => y * gridWidth + x,
+    [gridWidth],
+  );
+
+  const isInBounds = useCallback(
+    (x: number, y: number) => x >= 0 && x < gridWidth && y >= 0 && y < gridHeight,
+    [gridHeight, gridWidth],
+  );
+
+  const captureSelectionPixels = useCallback(
+    (rect: SelectionRect): SelectionPixel[] => {
+      const result: SelectionPixel[] = [];
+      const source = activeLayerPixelsRef.current;
+      for (let relY = 0; relY < rect.height; relY += 1) {
+        for (let relX = 0; relX < rect.width; relX += 1) {
+          const absX = rect.x + relX;
+          const absY = rect.y + relY;
+          if (!isInBounds(absX, absY)) continue;
+          const index = coordsToIndex(absX, absY);
+          const color = source[index];
+          if (color === null) continue;
+          result.push({ relX, relY, color });
+        }
+      }
+      return result;
+    },
+    [coordsToIndex, isInBounds],
+  );
+
+  const applySelectionToLayer = useCallback(
+    (target: SelectionState, offset: { dx: number; dy: number }, mode: "apply" | "clear") => {
+      if (!target.pixels.length) return;
+      setActiveLayerPixels((prev) => {
+        const next = [...prev];
+        let changed = false;
+        for (const pixel of target.pixels) {
+          const targetX = target.rect.x + pixel.relX + offset.dx;
+          const targetY = target.rect.y + pixel.relY + offset.dy;
+          if (!isInBounds(targetX, targetY)) continue;
+          const index = coordsToIndex(targetX, targetY);
+          const nextValue = mode === "clear" ? null : pixel.color;
+          if (next[index] === nextValue) continue;
+          next[index] = nextValue;
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+    },
+    [coordsToIndex, isInBounds, setActiveLayerPixels],
+  );
+  
+  const updateHistoryState = useCallback(() => {
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(redoStackRef.current.length > 0);
+  }, []);
+
+  const clearSelectionState = useCallback(() => {
+    setSelection(null);
+    setSelectionPreviewRect(null);
+    setPathPreview(null);
+  }, [setPathPreview, setSelection]);
+
+  const finalizeAction = useCallback(() => {
+    if (!actionInProgressRef.current) return;
+    const undoStack = undoStackRef.current;
+    const lastSnapshot = undoStack[undoStack.length - 1];
+    const currentState: LayerSnapshot = {
+      layers: cloneLayers(layersRef.current, totalCells),
+      activeLayerId,
+      selection: cloneSelection(selectionRef.current),
+    };
+    if (
+      lastSnapshot &&
+      lastSnapshot.activeLayerId === currentState.activeLayerId &&
+      areLayersEqual(lastSnapshot.layers, currentState.layers) &&
+      areSelectionsEqual(lastSnapshot.selection, currentState.selection)
+    ) {
+      undoStack.pop();
+    }
+    actionModifiedRef.current = false;
+    actionInProgressRef.current = false;
+    updateHistoryState();
+  }, [activeLayerId, totalCells, updateHistoryState]);
+
+  const selectionCancelClickRef = useRef(false);
+
+  const releaseSelectionPointerCapture = useCallback(
+    (pointerId?: number | null) => {
+      const activePointerId = selectionPointerIdRef.current;
+      if (activePointerId === null) return;
+      if (typeof pointerId === "number" && pointerId !== activePointerId) {
+        return;
+      }
+      const canvas = gridRef.current;
+      if (
+        canvas &&
+        typeof canvas.releasePointerCapture === "function" &&
+        canvas.hasPointerCapture?.(activePointerId)
+      ) {
+        try {
+          canvas.releasePointerCapture(activePointerId);
+        } catch {
+          // ignore release failures
+        }
+      }
+      selectionPointerIdRef.current = null;
+    },
+    [gridRef],
+  );
+
+  const cancelSelection = useCallback(() => {
+    const hadDraft = selectionDraftOriginRef.current !== null;
+    if (selectionDraftOriginRef.current) {
+      selectionDraftOriginRef.current = null;
+    }
+    if (selectionMoveRef.current) {
+      selectionMoveRef.current = null;
+    }
+    selectionLastPointerCellRef.current = null;
+    const current = selectionRef.current;
+    if (!current && !hadDraft) {
+      return false;
+    }
+    if (current?.isFloating) {
+      applySelectionToLayer(current, current.offset, "apply");
+    }
+    clearSelectionState();
+    releaseSelectionPointerCapture();
+    if (selectionActionActiveRef.current) {
+      finalizeAction();
+      selectionActionActiveRef.current = false;
+    }
+    selectionCancelClickRef.current = false;
+    return true;
+  }, [applySelectionToLayer, clearSelectionState, finalizeAction, releaseSelectionPointerCapture]);
+
+  const selectEntireCanvas = useCallback(() => {
+    if (gridWidth <= 0 || gridHeight <= 0) {
+      return;
+    }
+    cancelSelection();
+    const rect: SelectionRect = {
+      x: 0,
+      y: 0,
+      width: gridWidth,
+      height: gridHeight,
+    };
+    const pixels = captureSelectionPixels(rect);
+    setSelection({
+      rect,
+      offset: { dx: 0, dy: 0 },
+      pixels,
+      isFloating: false,
+    });
+    setSelectionPreviewRect(null);
+    setPathPreview(null);
+  }, [cancelSelection, captureSelectionPixels, gridHeight, gridWidth, setPathPreview, setSelection]);
+
+  const finalizeSelectionMove = useCallback(() => {
+    setSelection((current) => {
+      if (!current || !current.isFloating) {
+        return current;
+      }
+      applySelectionToLayer(current, current.offset, "apply");
+      return {
+        ...current,
+        rect: {
+          ...current.rect,
+          x: current.rect.x + current.offset.dx,
+          y: current.rect.y + current.offset.dy,
+        },
+        offset: { dx: 0, dy: 0 },
+        isFloating: false,
+      };
+    });
+  }, [applySelectionToLayer, setSelection]);
+
+  const recordSnapshot = useCallback(() => {
+    const undoStack = undoStackRef.current;
+    const snapshot: LayerSnapshot = {
+      layers: cloneLayers(layersRef.current, totalCells),
+      activeLayerId,
+      selection: cloneSelection(selectionRef.current),
+    };
+    const lastSnapshot = undoStack[undoStack.length - 1];
+    if (
+      lastSnapshot &&
+      lastSnapshot.activeLayerId === snapshot.activeLayerId &&
+      areLayersEqual(lastSnapshot.layers, snapshot.layers) &&
+      areSelectionsEqual(lastSnapshot.selection, snapshot.selection)
+    ) {
+      return;
+    }
+    if (undoStack.length === MAX_HISTORY) {
+      undoStack.shift();
+    }
+    undoStack.push(snapshot);
+    updateHistoryState();
+  }, [activeLayerId, totalCells, updateHistoryState]);
+
+  const beginAction = useCallback(() => {
+    if (actionInProgressRef.current) return;
+    recordSnapshot();
+    redoStackRef.current = [];
+    updateHistoryState();
+    actionInProgressRef.current = true;
+    actionModifiedRef.current = false;
+  }, [recordSnapshot, updateHistoryState]);
+
+  const deleteSelection = useCallback(() => {
+    const current = selectionRef.current;
+    if (!current) return;
+    if (!current.isFloating && current.pixels.length) {
+      beginAction();
+      applySelectionToLayer(current, current.offset, "clear");
+      finalizeAction();
+    } else if (current.isFloating && current.pixels.length) {
+      beginAction();
+      finalizeAction();
+    }
+    clearSelectionState();
+  }, [applySelectionToLayer, beginAction, clearSelectionState, finalizeAction]);
+
   const paletteColors = useMemo(
     () => [...currentPalette.colors, "transparent"] as PaletteColor[],
     [currentPalette],
@@ -277,11 +651,6 @@ export function PixelPencil() {
       x: index % gridWidth,
       y: Math.floor(index / gridWidth),
     }),
-    [gridWidth],
-  );
-
-  const coordsToIndex = useCallback(
-    (x: number, y: number) => y * gridWidth + x,
     [gridWidth],
   );
 
@@ -375,11 +744,6 @@ export function PixelPencil() {
       }
     };
   }, []);
-
-  const isInBounds = useCallback(
-    (x: number, y: number) => x >= 0 && x < gridWidth && y >= 0 && y < gridHeight,
-    [gridHeight, gridWidth],
-  );
 
   const {
     isOpen: isSaveDialogOpen,
@@ -541,6 +905,16 @@ export function PixelPencil() {
     setCanvasScrollClamped,
   ]);
 
+  const handleWheelZoom = useCallback(
+    (direction: "in" | "out", focusIndex: number | null) => {
+      if (focusIndex !== null) {
+        zoomFocusIndexRef.current = focusIndex;
+      }
+      applyZoom(direction);
+    },
+    [applyZoom],
+  );
+
   useEffect(() => {
     activeLayerPixelsRef.current = activeLayerPixels;
   }, [activeLayerPixels]);
@@ -677,6 +1051,25 @@ export function PixelPencil() {
   }, []);
 
   useEffect(() => {
+    if (tool === "rect-select" || selectionPointerIdRef.current === null) {
+      return;
+    }
+    const canvas = gridRef.current;
+    if (
+      canvas &&
+      typeof canvas.releasePointerCapture === "function" &&
+      canvas.hasPointerCapture?.(selectionPointerIdRef.current)
+    ) {
+      try {
+        canvas.releasePointerCapture(selectionPointerIdRef.current);
+      } catch {
+        // ignore release failures
+      }
+    }
+    selectionPointerIdRef.current = null;
+  }, [tool]);
+
+  useEffect(() => {
     if (tool !== "line" && tool !== "shape") {
       setDragStartIndex(null);
       setPathPreview(null);
@@ -685,11 +1078,6 @@ export function PixelPencil() {
       lastPaintedIndexRef.current = null;
     }
   }, [tool]);
-
-  const updateHistoryState = useCallback(() => {
-    setCanUndo(undoStackRef.current.length > 0);
-    setCanRedo(redoStackRef.current.length > 0);
-  }, []);
 
   useEffect(() => {
     updateHistoryState();
@@ -718,59 +1106,23 @@ export function PixelPencil() {
         activeLayerPixelsRef.current = cloned;
         setActiveLayerPixelsState(cloned);
       }
+      setSelection(cloneSelection(snapshot.selection));
+      setSelectionPreviewRect(null);
+      selectionDraftOriginRef.current = null;
+      selectionMoveRef.current = null;
+      selectionLastPointerCellRef.current = null;
+      selectionActionActiveRef.current = false;
+      selectionCancelClickRef.current = false;
+      releaseSelectionPointerCapture();
     },
-    [setActiveLayerPixelsState, totalCells],
+    [
+      releaseSelectionPointerCapture,
+      setActiveLayerPixelsState,
+      setSelection,
+      setSelectionPreviewRect,
+      totalCells,
+    ],
   );
-
-  const recordSnapshot = useCallback(() => {
-    const undoStack = undoStackRef.current;
-    const snapshot: LayerSnapshot = {
-      layers: cloneLayers(layersRef.current, totalCells),
-      activeLayerId,
-    };
-    const lastSnapshot = undoStack[undoStack.length - 1];
-    if (
-      lastSnapshot &&
-      lastSnapshot.activeLayerId === snapshot.activeLayerId &&
-      areLayersEqual(lastSnapshot.layers, snapshot.layers)
-    ) {
-      return;
-    }
-    if (undoStack.length === MAX_HISTORY) {
-      undoStack.shift();
-    }
-    undoStack.push(snapshot);
-    updateHistoryState();
-  }, [activeLayerId, totalCells, updateHistoryState]);
-
-  const beginAction = useCallback(() => {
-    if (actionInProgressRef.current) return;
-    recordSnapshot();
-    redoStackRef.current = [];
-    updateHistoryState();
-    actionInProgressRef.current = true;
-    actionModifiedRef.current = false;
-  }, [recordSnapshot, updateHistoryState]);
-
-  const finalizeAction = useCallback(() => {
-    if (!actionInProgressRef.current) return;
-    const undoStack = undoStackRef.current;
-    const lastSnapshot = undoStack[undoStack.length - 1];
-    const currentState: LayerSnapshot = {
-      layers: cloneLayers(layersRef.current, totalCells),
-      activeLayerId,
-    };
-    if (
-      lastSnapshot &&
-      lastSnapshot.activeLayerId === currentState.activeLayerId &&
-      areLayersEqual(lastSnapshot.layers, currentState.layers)
-    ) {
-      undoStack.pop();
-    }
-    actionModifiedRef.current = false;
-    actionInProgressRef.current = false;
-    updateHistoryState();
-  }, [activeLayerId, totalCells, updateHistoryState]);
 
   const undo = useCallback(() => {
     if (actionInProgressRef.current) return;
@@ -781,6 +1133,7 @@ export function PixelPencil() {
     const currentSnapshot: LayerSnapshot = {
       layers: cloneLayers(layersRef.current, totalCells),
       activeLayerId,
+      selection: cloneSelection(selectionRef.current),
     };
     if (redoStackRef.current.length === MAX_HISTORY) {
       redoStackRef.current.shift();
@@ -791,7 +1144,13 @@ export function PixelPencil() {
     actionModifiedRef.current = false;
     actionInProgressRef.current = false;
     updateHistoryState();
-  }, [activeLayerId, applySnapshot, setHoverIndexIfChanged, totalCells, updateHistoryState]);
+  }, [
+    activeLayerId,
+    applySnapshot,
+    setHoverIndexIfChanged,
+    totalCells,
+    updateHistoryState,
+  ]);
 
   const redo = useCallback(() => {
     if (actionInProgressRef.current) return;
@@ -802,6 +1161,7 @@ export function PixelPencil() {
     const currentSnapshot: LayerSnapshot = {
       layers: cloneLayers(layersRef.current, totalCells),
       activeLayerId,
+      selection: cloneSelection(selectionRef.current),
     };
     const undoStack = undoStackRef.current;
     if (undoStack.length === MAX_HISTORY) {
@@ -847,7 +1207,14 @@ export function PixelPencil() {
   useEffect(() => {
     const handleToolHotkeys = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      if (isSettingsDialogOpen || isResetDialogOpen || isHotkeysDialogOpen) return;
+      if (
+        isSettingsDialogOpen ||
+        isChangelogDialogOpen ||
+        isResetDialogOpen ||
+        isHotkeysDialogOpen
+      ) {
+        return;
+      }
       const activeElement = document.activeElement as HTMLElement | null;
       if (activeElement && (activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA" || activeElement.isContentEditable)) {
         return;
@@ -857,6 +1224,9 @@ export function PixelPencil() {
         handleOpenResetDialog();
         return;
       }
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+        return;
+      }
       const match = TOOLS.find((item) => item.hotkey === key);
       if (!match) return;
       event.preventDefault();
@@ -864,7 +1234,58 @@ export function PixelPencil() {
     };
     window.addEventListener("keydown", handleToolHotkeys);
     return () => window.removeEventListener("keydown", handleToolHotkeys);
-  }, [handleOpenResetDialog, isHotkeysDialogOpen, isResetDialogOpen, isSettingsDialogOpen, setTool]);
+  }, [
+    handleOpenResetDialog,
+    isChangelogDialogOpen,
+    isHotkeysDialogOpen,
+    isResetDialogOpen,
+    isSettingsDialogOpen,
+    setTool,
+  ]);
+
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        target.isContentEditable ||
+        target.getAttribute("role") === "textbox"
+      );
+    };
+
+    const handleSelectionKeys = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "delete" || key === "backspace") {
+        if (selectionRef.current) {
+          event.preventDefault();
+          deleteSelection();
+        }
+        return;
+      }
+      if (key === "escape") {
+        if (
+          selectionRef.current ||
+          selectionDraftOriginRef.current ||
+          selectionMoveRef.current
+        ) {
+          event.preventDefault();
+          cancelSelection();
+        }
+        return;
+      }
+      if (key === "a" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        selectEntireCanvas();
+      }
+    };
+    window.addEventListener("keydown", handleSelectionKeys);
+    return () => window.removeEventListener("keydown", handleSelectionKeys);
+  }, [cancelSelection, deleteSelection, selectEntireCanvas]);
 
   const computeBrushIndices = useCallback(
     (centerIndex: number) => {
@@ -1033,7 +1454,6 @@ export function PixelPencil() {
 
       const isErase =
         tool === "eraser" ||
-        event.altKey ||
         event.metaKey ||
         event.ctrlKey ||
         (typeof event.buttons === "number" && (event.buttons & 2) === 2);
@@ -1051,6 +1471,18 @@ export function PixelPencil() {
       setDrawValue,
       tool,
     ],
+  );
+
+  const pickColorAtIndex = useCallback(
+    (pointerIndex: number) => {
+      const currentPixels = compositePixelsRef.current;
+      const value = currentPixels[pointerIndex];
+      const pickedColor: PaletteColor =
+        value === null ? "transparent" : (value as PaletteColor);
+      setActiveColor(pickedColor);
+      setDrawValue(pickedColor);
+    },
+    [setActiveColor, setDrawValue],
   );
 
   const startStroke = useCallback(
@@ -1322,6 +1754,20 @@ export function PixelPencil() {
     [computeLineIndices, coordsToIndex, isInBounds],
   );
 
+  const buildPreviewFromAppliedCells = useCallback(
+    (cells: Iterable<number>) => {
+      const preview = new Set<number>();
+      for (const cell of cells) {
+        const footprint = computeBrushIndices(cell);
+        for (const idx of footprint) {
+          preview.add(idx);
+        }
+      }
+      return preview;
+    },
+    [computeBrushIndices],
+  );
+
   const appendStrokePoint = useCallback(
     (worldPoint: { x: number; y: number }) => {
       const worldPoints = strokeWorldPointsRef.current;
@@ -1345,13 +1791,12 @@ export function PixelPencil() {
             newCells.push(cell);
           }
           if (previewToolEffects) {
-            const previewSet = new Set(applied);
-            setPathPreview(previewSet);
+            setPathPreview(buildPreviewFromAppliedCells(applied));
           }
         }
       }
     },
-    [previewToolEffects, setPathPreview, traceWorldSegment],
+    [buildPreviewFromAppliedCells, previewToolEffects, setPathPreview, traceWorldSegment],
   );
 
   const commitStrokeBuffer = useCallback(
@@ -1523,9 +1968,14 @@ export function PixelPencil() {
     ): ResolvedPointer | null => {
       const position = resolvePositionFromClientPoint(clientX, clientY, options);
       if (!position) return null;
-      const cellX = Math.floor(position.x);
-      const cellY = Math.floor(position.y);
-      if (!isInBounds(cellX, cellY)) return null;
+      let cellX = Math.floor(position.x);
+      let cellY = Math.floor(position.y);
+      if (options?.clamp) {
+        cellX = clampCellX(cellX);
+        cellY = clampCellY(cellY);
+      } else if (!isInBounds(cellX, cellY)) {
+        return null;
+      }
       return {
         index: coordsToIndex(cellX, cellY),
         cellX,
@@ -1533,7 +1983,7 @@ export function PixelPencil() {
         position,
       };
     },
-    [coordsToIndex, isInBounds, resolvePositionFromClientPoint],
+    [clampCellX, clampCellY, coordsToIndex, isInBounds, resolvePositionFromClientPoint],
   );
 
   const resolvePointerFromPointerEvent = useCallback(
@@ -1628,6 +2078,82 @@ export function PixelPencil() {
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>, index: number) => {
       event.preventDefault();
+      if (tool === "rect-select") {
+        const resolved = resolvePointerFromPointerEvent(event, { clamp: true });
+        if (!resolved) return;
+        const cellX = resolved.cellX;
+        const cellY = resolved.cellY;
+        const activeSelection = selectionRef.current;
+
+        if (activeSelection && selectionContainsCell(activeSelection, cellX, cellY)) {
+          if (typeof event.currentTarget.setPointerCapture === "function") {
+            try {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              selectionPointerIdRef.current = event.pointerId;
+            } catch {
+              selectionPointerIdRef.current = null;
+            }
+          }
+          selectionDraftOriginRef.current = null;
+          selectionMoveRef.current = {
+            pointer: { x: cellX, y: cellY },
+            startOffset: activeSelection.offset,
+          };
+          if (activeSelection.pixels.length) {
+            beginAction();
+            selectionActionActiveRef.current = true;
+            if (!activeSelection.isFloating) {
+              applySelectionToLayer(activeSelection, activeSelection.offset, "clear");
+              setSelection((prev) =>
+                prev
+                  ? {
+                    ...prev,
+                    offset: { dx: 0, dy: 0 },
+                    isFloating: true,
+                  }
+                  : prev,
+              );
+            }
+          }
+          return;
+        }
+
+        if (activeSelection && !selectionContainsCell(activeSelection, cellX, cellY)) {
+          cancelSelection();
+          selectionCancelClickRef.current = true;
+        } else {
+          selectionCancelClickRef.current = false;
+        }
+
+        if (typeof event.currentTarget.setPointerCapture === "function") {
+          try {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            selectionPointerIdRef.current = event.pointerId;
+          } catch {
+            selectionPointerIdRef.current = null;
+          }
+        }
+
+        selectionMoveRef.current = null;
+        selectionDraftOriginRef.current = {
+          x: clampCellX(resolved.cellX),
+          y: clampCellY(resolved.cellY),
+        };
+        selectionLastPointerCellRef.current = {
+          x: selectionDraftOriginRef.current.x,
+          y: selectionDraftOriginRef.current.y,
+        };
+        clearSelectionState();
+        const initialRect = {
+          x: selectionDraftOriginRef.current.x,
+          y: selectionDraftOriginRef.current.y,
+          width: 1,
+          height: 1,
+        };
+        setSelectionPreviewRect(initialRect);
+        setPathPreview(null);
+        return;
+      }
       const resolved = resolvePointerFromPointerEvent(event, { clamp: true });
       const pointerIndex = resolved?.index ?? index;
       const pointerData: ResolvedPointer =
@@ -1637,6 +2163,14 @@ export function PixelPencil() {
           cellY: Math.floor(pointerIndex / gridWidth),
           position: { x: pointerIndex % gridWidth + 0.5, y: Math.floor(pointerIndex / gridWidth) + 0.5 },
         };
+
+      const activeSelection = selectionRef.current;
+      if (
+        activeSelection &&
+        !selectionContainsCell(activeSelection, pointerData.cellX, pointerData.cellY)
+      ) {
+        cancelSelection();
+      }
 
       setHoverIndexIfChanged(pointerIndex);
       pointerQueueRef.current.length = 0;
@@ -1652,18 +2186,13 @@ export function PixelPencil() {
         return;
       }
 
-      if (tool === "picker") {
-        const currentPixels = compositePixelsRef.current;
-        const value = currentPixels[pointerIndex];
-        const pickedColor: PaletteColor =
-          value === null ? "transparent" : (value as PaletteColor);
-        setActiveColor(pickedColor);
-        setDrawValue(pickedColor);
+      if (tool === "picker" || event.altKey) {
+        pickColorAtIndex(pointerIndex);
         return;
       }
 
       const isRightClick = event.button === 2;
-      const isErase = isRightClick || event.altKey || event.metaKey || event.ctrlKey;
+      const isErase = isRightClick || event.metaKey || event.ctrlKey;
       beginAction();
       if (tool === "bucket") {
         floodFill(pointerIndex, isErase ? null : activeColor);
@@ -1719,7 +2248,7 @@ export function PixelPencil() {
         applied.add(pointerData.index);
         strokeAppliedCellsRef.current = applied;
         if (previewToolEffects) {
-          setPathPreview(new Set(applied));
+          setPathPreview(buildPreviewFromAppliedCells(applied));
         } else {
           setPathPreview(null);
         }
@@ -1732,23 +2261,34 @@ export function PixelPencil() {
       if (strokeAppliedCellsRef.current && (tool === "pencil" || tool === "eraser")) {
         strokeAppliedCellsRef.current.add(pointerData.index);
         if (previewToolEffects) {
-          setPathPreview(new Set(strokeAppliedCellsRef.current));
+          setPathPreview(
+            buildPreviewFromAppliedCells(strokeAppliedCellsRef.current),
+          );
         }
       }
     },
     [
+      applySelectionToLayer,
+      buildPreviewFromAppliedCells,
       activeColor,
       applyBrush,
       applyZoom,
       beginAction,
       buildLinePreview,
+      cancelSelection,
+      clampCellX,
+      clampCellY,
+      clearSelectionState,
       computeLineIndices,
       computeShapeCells,
       floodFill,
       gridWidth,
       lastPointedIndex,
+      selectionContainsCell,
       previewToolEffects,
       resolvePointerFromPointerEvent,
+      pickColorAtIndex,
+      setSelection,
       setHoverIndexIfChanged,
       setDrawValue,
       shapeFilled,
@@ -1756,6 +2296,82 @@ export function PixelPencil() {
       startStroke,
       tool,
       zoomMode,
+  ],
+  );
+
+  const handleSelectionBackgroundPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLCanvasElement>) => {
+      if (
+        !selectionRef.current &&
+        !selectionDraftOriginRef.current &&
+        !selectionMoveRef.current
+      ) {
+        return;
+      }
+      event.preventDefault();
+      selectionCancelClickRef.current = true;
+      cancelSelection();
+    },
+    [cancelSelection],
+  );
+
+  const finalizeRectSelectionPointerUp = useCallback(
+    (eventData: { clientX: number; clientY: number; pointerId?: number | null }) => {
+      if (tool !== "rect-select") return false;
+      const draftStart = selectionDraftOriginRef.current;
+      let handled = false;
+      if (draftStart) {
+        const resolved = resolvePointerFromClientPoint(eventData.clientX, eventData.clientY, {
+          clamp: true,
+        });
+        const fallback = selectionLastPointerCellRef.current ?? draftStart;
+        const endCell = resolved
+          ? { x: resolved.cellX, y: resolved.cellY }
+          : fallback;
+        const rect = normalizeSelectionRect(draftStart, endCell);
+        selectionDraftOriginRef.current = null;
+        selectionLastPointerCellRef.current = null;
+        setSelectionPreviewRect(null);
+        setPathPreview(null);
+        if (selectionCancelClickRef.current) {
+          selectionCancelClickRef.current = false;
+        } else {
+          const pixels = captureSelectionPixels(rect);
+          setSelection({
+            rect,
+            offset: { dx: 0, dy: 0 },
+            pixels,
+            isFloating: false,
+          });
+        }
+        handled = true;
+      } else if (selectionMoveRef.current) {
+        selectionMoveRef.current = null;
+        finalizeSelectionMove();
+        if (selectionActionActiveRef.current) {
+          finalizeAction();
+          selectionActionActiveRef.current = false;
+        }
+        setPathPreview(null);
+        selectionCancelClickRef.current = false;
+        handled = true;
+      }
+      if (handled) {
+        releaseSelectionPointerCapture(eventData.pointerId ?? null);
+      }
+      return handled;
+    },
+    [
+      captureSelectionPixels,
+      finalizeAction,
+      finalizeSelectionMove,
+      normalizeSelectionRect,
+      releaseSelectionPointerCapture,
+      resolvePointerFromClientPoint,
+      setPathPreview,
+      setSelection,
+      setSelectionPreviewRect,
+      tool,
     ],
   );
 
@@ -1801,6 +2417,59 @@ export function PixelPencil() {
     ],
   );
 
+  const updateRectSelectionFromClientPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      if (tool !== "rect-select") return false;
+      const resolved = resolvePointerFromClientPoint(clientX, clientY, {
+        clamp: true,
+      });
+      if (!resolved) return false;
+      if (selectionDraftOriginRef.current) {
+        selectionLastPointerCellRef.current = {
+          x: resolved.cellX,
+          y: resolved.cellY,
+        };
+        const rect = normalizeSelectionRect(selectionDraftOriginRef.current, {
+          x: resolved.cellX,
+          y: resolved.cellY,
+        });
+        if (
+          selectionCancelClickRef.current &&
+          (rect.x !== selectionDraftOriginRef.current.x ||
+            rect.y !== selectionDraftOriginRef.current.y ||
+            rect.width > 1 ||
+            rect.height > 1)
+        ) {
+          selectionCancelClickRef.current = false;
+        }
+        setSelectionPreviewRect(rect);
+        setPathPreview(null);
+      } else if (selectionMoveRef.current && selectionRef.current) {
+        const activeSelection = selectionRef.current;
+        const deltaX = resolved.cellX - selectionMoveRef.current.pointer.x;
+        const deltaY = resolved.cellY - selectionMoveRef.current.pointer.y;
+        const desired = {
+          dx: selectionMoveRef.current.startOffset.dx + deltaX,
+          dy: selectionMoveRef.current.startOffset.dy + deltaY,
+        };
+        const clamped = clampSelectionOffset(activeSelection.rect, desired);
+        setSelection((prev) =>
+          prev ? { ...prev, offset: clamped } : prev,
+        );
+      }
+      return true;
+    },
+    [
+      clampSelectionOffset,
+      normalizeSelectionRect,
+      resolvePointerFromClientPoint,
+      setPathPreview,
+      setSelection,
+      setSelectionPreviewRect,
+      tool,
+    ],
+  );
+
   const handlePointerMove = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>) => {
       const nativeEvent = event.nativeEvent;
@@ -1810,6 +2479,13 @@ export function PixelPencil() {
           : [];
       const samples =
         coalesced.length > 0 ? [...coalesced, nativeEvent] : [nativeEvent];
+
+      if (tool === "rect-select") {
+        const lastSample = samples[samples.length - 1];
+        if (updateRectSelectionFromClientPoint(lastSample.clientX, lastSample.clientY)) {
+          return;
+        }
+      }
 
       if (!isDrawingRef.current) {
         const lastSample = samples[samples.length - 1];
@@ -1870,17 +2546,31 @@ export function PixelPencil() {
       previewToolEffects,
       processDrawingSamples,
       resolvePointerFromClientPoint,
+      clampSelectionOffset,
+      normalizeSelectionRect,
+      setSelection,
       setHoverIndexIfChanged,
       shapeFilled,
       shapeType,
       tool,
       updateShiftLinePreview,
+      updateRectSelectionFromClientPoint,
+      selectionMoveRef,
+      selectionDraftOriginRef,
     ],
   );
 
   const handlePointerUp = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>) => {
       event.preventDefault();
+      const handledSelectionPointerUp = finalizeRectSelectionPointerUp({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        pointerId: event.pointerId,
+      });
+      if (handledSelectionPointerUp) {
+        return;
+      }
       const wasDragAction = tool === "line" || tool === "shape";
       const capturedPointer = activePointerIdRef.current;
       const releasePointer = typeof event.currentTarget.hasPointerCapture === "function" && event.currentTarget.hasPointerCapture(event.pointerId);
@@ -1931,13 +2621,14 @@ export function PixelPencil() {
     [
       appendStrokePoint,
       applyLinePath,
+      commitStrokeBuffer,
       computeLineIndices,
       computeShapeCells,
-      hoverIndex,
       dragStartIndex,
-      lastPointedIndex,
-      commitStrokeBuffer,
+      finalizeRectSelectionPointerUp,
       flushPointerQueue,
+      hoverIndex,
+      lastPointedIndex,
       resolveIndexFromPointerEvent,
       resolvePointerFromPointerEvent,
       setHoverIndexIfChanged,
@@ -1951,11 +2642,111 @@ export function PixelPencil() {
   const handlePointerLeave = useCallback(() => {
     if (!isDrawingRef.current) {
       setHoverIndexIfChanged(null);
-      if (tool === "line" || tool === "shape" || tool === "pencil" || tool === "eraser") {
+      if (tool === "line" || tool === "shape" || tool === "pencil" || tool === "eraser" || tool === "rect-select") {
         setPathPreview(null);
       }
     }
   }, [setHoverIndexIfChanged, tool]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleGlobalSelectionPointerUp = (clientX: number, clientY: number, pointerId: number | null) => {
+      if (
+        selectionDraftOriginRef.current === null &&
+        selectionMoveRef.current === null
+      ) {
+        return;
+      }
+      if (
+        selectionPointerIdRef.current !== null &&
+        pointerId !== null &&
+        pointerId !== selectionPointerIdRef.current
+      ) {
+        return;
+      }
+      finalizeRectSelectionPointerUp({
+        clientX,
+        clientY,
+        pointerId,
+      });
+    };
+    const supportsPointerEvents =
+      typeof window.PointerEvent !== "undefined";
+    if (supportsPointerEvents) {
+      const pointerListener = (event: PointerEvent) => {
+        handleGlobalSelectionPointerUp(event.clientX, event.clientY, event.pointerId);
+      };
+      window.addEventListener("pointerup", pointerListener);
+      return () => window.removeEventListener("pointerup", pointerListener);
+    }
+    const mouseListener = (event: MouseEvent) => {
+      handleGlobalSelectionPointerUp(event.clientX, event.clientY, null);
+    };
+    const touchListener = (event: TouchEvent) => {
+      const touch = event.changedTouches[0];
+      if (!touch) return;
+      handleGlobalSelectionPointerUp(touch.clientX, touch.clientY, null);
+    };
+    window.addEventListener("mouseup", mouseListener);
+    window.addEventListener("touchend", touchListener);
+    window.addEventListener("touchcancel", touchListener);
+    return () => {
+      window.removeEventListener("mouseup", mouseListener);
+      window.removeEventListener("touchend", touchListener);
+      window.removeEventListener("touchcancel", touchListener);
+    };
+  }, [finalizeRectSelectionPointerUp]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleMove = (clientX: number, clientY: number, pointerId: number | null) => {
+      if (tool !== "rect-select") return;
+      if (
+        selectionDraftOriginRef.current === null &&
+        selectionMoveRef.current === null
+      ) {
+        return;
+      }
+      if (
+        selectionPointerIdRef.current !== null &&
+        pointerId !== null &&
+        pointerId !== selectionPointerIdRef.current
+      ) {
+        return;
+      }
+      updateRectSelectionFromClientPoint(clientX, clientY);
+    };
+    const supportsPointerEvents =
+      typeof window.PointerEvent !== "undefined";
+    if (supportsPointerEvents) {
+      const pointerListener = (event: PointerEvent) => {
+        handleMove(event.clientX, event.clientY, event.pointerId);
+      };
+      window.addEventListener("pointermove", pointerListener);
+      return () => window.removeEventListener("pointermove", pointerListener);
+    }
+    const mouseListener = (event: MouseEvent) => {
+      handleMove(event.clientX, event.clientY, null);
+    };
+    const touchListener = (event: TouchEvent) => {
+      if (
+        selectionDraftOriginRef.current === null &&
+        selectionMoveRef.current === null
+      ) {
+        return;
+      }
+      const touch = event.touches[0];
+      if (!touch) return;
+      event.preventDefault();
+      handleMove(touch.clientX, touch.clientY, null);
+    };
+    window.addEventListener("mousemove", mouseListener);
+    window.addEventListener("touchmove", touchListener, { passive: false });
+    return () => {
+      window.removeEventListener("mousemove", mouseListener);
+      window.removeEventListener("touchmove", touchListener);
+    };
+  }, [tool, updateRectSelectionFromClientPoint]);
 
   // Render matrix once so React keys stay stable.
   const bucketPreview = useMemo(() => {
@@ -2047,6 +2838,7 @@ export function PixelPencil() {
 
   const HOTKEYS_MAP = useMemo(
     () => [
+      { label: "Select", key: "R" },
       { label: "Pencil", key: "Q" },
       { label: "Eraser", key: "W" },
       { label: "Picker", key: "E" },
@@ -2080,6 +2872,14 @@ export function PixelPencil() {
     setIsSettingsDialogOpen(false);
   }, []);
 
+  const handleOpenChangelogDialog = useCallback(() => {
+    setIsChangelogDialogOpen(true);
+  }, []);
+
+  const handleCloseChangelogDialog = useCallback(() => {
+    setIsChangelogDialogOpen(false);
+  }, []);
+
   useEffect(() => {
     if (!isSettingsDialogOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -2090,6 +2890,17 @@ export function PixelPencil() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isSettingsDialogOpen]);
+
+  useEffect(() => {
+    if (!isChangelogDialogOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsChangelogDialogOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isChangelogDialogOpen]);
 
   const handleCloseHotkeysDialog = useCallback(() => {
     setIsHotkeysDialogOpen(false);
@@ -2117,6 +2928,22 @@ export function PixelPencil() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleCloseSaveDialog, isSaveDialogOpen]);
 
+  useEffect(() => {
+    const handleGlobalPointerDown = (event: PointerEvent) => {
+      const wrapper = gridWrapperRef.current;
+      if (!wrapper) return;
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (!wrapper.contains(target)) {
+        cancelSelection();
+      }
+    };
+    window.addEventListener("pointerdown", handleGlobalPointerDown);
+    return () => {
+      window.removeEventListener("pointerdown", handleGlobalPointerDown);
+    };
+  }, [cancelSelection]);
+
   const selectedColorStyles = useMemo(() => {
     const isTransparent = activeColor === "transparent";
     return {
@@ -2134,7 +2961,7 @@ export function PixelPencil() {
 
   return (
     <>
-      <div className="flex min-h-screen flex-col bg-zinc-950 text-zinc-50 lg:min-h-0 lg:h-full lg:max-h-full">
+      <div className="flex h-screen flex-col overflow-hidden bg-zinc-950 text-zinc-50">
         <section className="border-b border-zinc-900 px-4 py-2 md:px-6">
           <div className="mx-auto max-w-4xl">
             <Toolbox tools={TOOLS} selectedToolId={tool} onSelect={setTool} />
@@ -2156,14 +2983,24 @@ export function PixelPencil() {
             </div>
             <div className="border-t border-zinc-900 p-4">
               <div className="flex h-12 items-end justify-center">
-                <Image
-                  src="/logos/PixiePaintLogo.png"
-                  alt="Pixie Paint Logo"
-                  width={110}
-                  height={32}
-                  priority
-                  style={{ imageRendering: "pixelated" }}
-                />
+                <button
+                  type="button"
+                  onClick={handleOpenChangelogDialog}
+                  className="flex select-none items-center gap-2 rounded-md px-2 py-1 transition hover:bg-zinc-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
+                  aria-label="Open changelog"
+                >
+                  <Image
+                    src="/logos/PixiePaintLogo.png"
+                    alt="Pixie Paint Logo"
+                    width={110}
+                    height={32}
+                    priority
+                    style={{ imageRendering: "pixelated" }}
+                  />
+                  <span className="text-xs font-medium text-zinc-300">
+                    v{APP_VERSION}
+                  </span>
+                </button>
               </div>
             </div>
           </aside>
@@ -2178,23 +3015,28 @@ export function PixelPencil() {
                   gridRef={gridRef}
                   pixels={compositePixels}
                   showPixelGrid={showPixelGrid}
+                  checkerSize={checkerSize}
                   previewToolEffects={previewToolEffects}
                   bucketPreview={bucketPreview}
                   brushPreview={brushPreview}
                   pathPreview={pathPreview}
-                drawValueRef={drawValueRef}
-                drawValueVersion={drawValueVersion}
-                tool={tool}
-                wrapperMaxWidth={availableWidth}
-                wrapperMaxHeight={availableHeight}
-                canvasScroll={canvasScroll}
-                onScrollChange={setCanvasScrollClamped}
-                onViewportResize={handleViewportResize}
-                handlePointerDown={handlePointerDown}
-                handlePointerEnter={handlePointerEnter}
-                handlePointerMove={handlePointerMove}
-                handlePointerUp={handlePointerUp}
-                handlePointerLeave={handlePointerLeave}
+                  drawValueRef={drawValueRef}
+                  drawValueVersion={drawValueVersion}
+                  tool={tool}
+                  wrapperMaxWidth={availableWidth}
+                  wrapperMaxHeight={availableHeight}
+                  canvasScroll={canvasScroll}
+                  onScrollChange={setCanvasScrollClamped}
+                  onViewportResize={handleViewportResize}
+                  onWheelZoom={handleWheelZoom}
+                  selectionOverlay={selection}
+                  selectionPreviewRect={selectionPreviewRect}
+                  handlePointerDown={handlePointerDown}
+                  handlePointerEnter={handlePointerEnter}
+                  handlePointerMove={handlePointerMove}
+                  handlePointerUp={handlePointerUp}
+                  handlePointerLeave={handlePointerLeave}
+                  onBackgroundPointerDown={handleSelectionBackgroundPointerDown}
                 />
               </div>
             </div>
@@ -2315,7 +3157,7 @@ export function PixelPencil() {
               </div>
             </div>
           </main>
-          <aside className="hidden md:block md:w-72 lg:w-80 border-l border-zinc-900 bg-zinc-950 p-6">
+          <aside className="hidden md:flex md:w-72 lg:w-80 flex-col min-h-0 overflow-y-auto border-l border-zinc-900 bg-zinc-950 p-6">
             <ToolSettingsPanel
               currentTool={currentTool}
               brushSize={brushSize}
@@ -2352,6 +3194,8 @@ export function PixelPencil() {
         gridHeight={gridHeight}
         isSettingsDialogOpen={isSettingsDialogOpen}
         handleCloseSettingsDialog={handleCloseSettingsDialog}
+        isChangelogDialogOpen={isChangelogDialogOpen}
+        handleCloseChangelogDialog={handleCloseChangelogDialog}
         isHotkeysDialogOpen={isHotkeysDialogOpen}
         handleCloseHotkeysDialog={handleCloseHotkeysDialog}
         hotkeys={HOTKEYS_MAP}

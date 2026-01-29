@@ -36,10 +36,10 @@ export function PaletteThemeSelector({ paletteThemeId,  currentPalette, drawValu
             <div className="relative w-full" ref={paletteMenuRef}>
                 <button
                     type="button"
-                    className="flex w-full items-center justify-between rounded-lg border border-zinc-300 bg-white px-4 py-2 text-left text-sm font-medium text-zinc-800 shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
+                    className="flex w-full items-center justify-between rounded-lg border border-zinc-300 bg-white px-2 py-2 text-left text-sm font-medium text-zinc-800 shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black"
                     onClick={() => setIsPaletteMenuOpen((prev) => !prev)}
                 >
-                    <span>{currentPalette.name}</span>
+                    <span className="me-2">{currentPalette.name}</span>
                     <span className="grid grid-cols-9 gap-1 place-items-center">
                         {currentPalette.colors.map((color, index) => {
                             const isTransparent = color === "transparent";

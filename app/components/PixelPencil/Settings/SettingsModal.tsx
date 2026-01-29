@@ -1,5 +1,5 @@
-import { useEffect } from "react";
 import {
+  CHECKER_SIZE_OPTIONS,
   GRID_DIMENSION_OPTIONS,
   usePixelPencilSettings,
 } from "../context/PixelPencilSettingsContext";
@@ -19,12 +19,9 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
         setGridHeight,
         showPixelGrid,
         setShowPixelGrid,
+        checkerSize,
+        setCheckerSize,
       } = usePixelPencilSettings();
-
-        useEffect(() => {
-          console.log(gridHeight, gridWidth);
-          console.log(GRID_DIMENSION_OPTIONS)
-        }, [gridHeight, gridWidth]);
 
     return <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
@@ -127,6 +124,30 @@ export function SettingsModal( { handleCloseSettingsDialog }: SettingsModalProps
                             : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
                         }`}
                         onClick={() => setGridHeight(size)}
+                      >
+                        {size}px
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex flex-col gap-3">
+                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                  Checker Size
+                </span>
+                <div className="flex flex-wrap gap-3">
+                  {CHECKER_SIZE_OPTIONS.map((size) => {
+                    const isSelected = size === checkerSize;
+                    return (
+                      <button
+                        key={`checker-size-${size}`}
+                        type="button"
+                        className={`rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-zinc-700 dark:focus-visible:ring-white dark:focus-visible:ring-offset-black ${
+                          isSelected
+                            ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                            : "bg-white text-zinc-700 hover:bg-zinc-100 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        }`}
+                        onClick={() => setCheckerSize(size)}
                       >
                         {size}px
                       </button>

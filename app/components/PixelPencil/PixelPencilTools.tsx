@@ -1,5 +1,13 @@
 import { PaintTool } from "./PixelPencilTypes";
 
+export const RectSelectionTool: PaintTool = {
+  id: "rect-select",
+  label: "Select",
+  icon: "/icons/tools/RectangularSelector.png",
+  settings: {},
+  hotkey: "r",
+};
+
 export const PencilTool: PaintTool = {
   id: "pencil",
   label: "Pencil",
